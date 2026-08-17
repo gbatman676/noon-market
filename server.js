@@ -1,244 +1,339 @@
 const http = require("http");
+const https = require("https");
 const fs = require("fs");
 const path = require("path");
-const { URL } = require("url");
+const crypto = require("crypto");
 
-const PORT = Number(process.env.PORT) || 3000;
-const TG = "https://t.me/customer_service_34";
+const PORT = process.env.PORT || 3000;
 
-const DATA_DIR = path.join(__dirname, "data");
-const USERS_FILE = path.join(DATA_DIR, "users.json");
+const ADMIN_USER =
+    process.env.ADMIN_USER || "admin";
+
+const ADMIN_PASSWORD =
+    process.env.ADMIN_PASSWORD || "ChangeMe123!";
+
+const DATA_DIR =
+    path.join(__dirname, "data");
+
+const USERS_FILE =
+    path.join(DATA_DIR, "users.json");
 
 if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.mkdirSync(DATA_DIR, {
+        recursive: true
+    });
 }
 
 if (!fs.existsSync(USERS_FILE)) {
-    fs.writeFileSync(USERS_FILE, "[]", "utf8");
-}
-
-function readUsers() {
-    try {
-        return JSON.parse(fs.readFileSync(USERS_FILE, "utf8"));
-    } catch {
-        return [];
-    }
-}
-
-function writeUsers(users) {
     fs.writeFileSync(
         USERS_FILE,
-        JSON.stringify(users, null, 2),
+        "[]",
         "utf8"
     );
 }
 
-function sendJSON(res, status, data) {
-    res.writeHead(status, {
-        "Content-Type": "application/json; charset=utf-8",
-        "Cache-Control": "no-store",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "Content-Type",
-        "Access-Control-Allow-Methods": "GET,POST,OPTIONS"
-    });
 
-    res.end(JSON.stringify(data));
-}
+/* ============================================================
+   USERS
+============================================================ */
 
-function body(req) {
-    return new Promise((resolve, reject) => {
-        let data = "";
-
-        req.on("data", chunk => {
-            data += chunk;
-        });
-
-        req.on("end", () => {
-            try {
-                resolve(data ? JSON.parse(data) : {});
-            } catch {
-                reject(new Error("Invalid JSON"));
-            }
-        });
-
-        req.on("error", reject);
-    });
-}
-
-
-// ============================================================
-// CRYPTO MARKET
-// ============================================================
-
-async function cryptoMarket() {
-
-    const r = await fetch(
-        "https://api.coingecko.com/api/v3/simple/price" +
-        "?ids=bitcoin,ethereum,tether,binancecoin,solana,ripple" +
-        "&vs_currencies=usd" +
-        "&include_24hr_change=true"
-    );
-
-    if (!r.ok) {
-        throw Error("Crypto market unavailable");
-    }
-
-    const d = await r.json();
-
-    return {
-        BTC: {
-            price: Number(d.bitcoin?.usd || 0),
-            change: Number(d.bitcoin?.usd_24h_change || 0)
-        },
-
-        ETH: {
-            price: Number(d.ethereum?.usd || 0),
-            change: Number(d.ethereum?.usd_24h_change || 0)
-        },
-
-        USDT: {
-            price: Number(d.tether?.usd || 0),
-            change: Number(d.tether?.usd_24h_change || 0)
-        },
-
-        BNB: {
-            price: Number(d.binancecoin?.usd || 0),
-            change: Number(d.binancecoin?.usd_24h_change || 0)
-        },
-
-        SOL: {
-            price: Number(d.solana?.usd || 0),
-            change: Number(d.solana?.usd_24h_change || 0)
-        },
-
-        XRP: {
-            price: Number(d.ripple?.usd || 0),
-            change: Number(d.ripple?.usd_24h_change || 0)
-        },
-
-        updatedAt: new Date().toISOString()
-    };
-}
-
-
-// ============================================================
-// STOCK MARKET
-// ============================================================
-
-async function stockQuote(symbol) {
+function readUsers() {
 
     try {
 
-        const r = await fetch(
-            "https://query1.finance.yahoo.com/v8/finance/chart/" +
-            encodeURIComponent(symbol) +
-            "?range=1d&interval=5m"
+        const data =
+            fs.readFileSync(
+                USERS_FILE,
+                "utf8"
+            );
+
+        const users =
+            JSON.parse(data);
+
+        return Array.isArray(users)
+            ? users
+            : [];
+
+    } catch (error) {
+
+        console.error(
+            "readUsers:",
+            error.message
         );
 
-        if (!r.ok) {
-            throw Error("stock");
-        }
-
-        const d = await r.json();
-
-        const result = d.chart?.result?.[0];
-
-        if (!result) {
-            throw Error("stock");
-        }
-
-        const meta = result.meta || {};
-
-        const price = Number(
-            meta.regularMarketPrice ||
-            meta.previousClose ||
-            0
-        );
-
-        const previous = Number(
-            meta.previousClose ||
-            0
-        );
-
-        let change = 0;
-
-        if (previous > 0) {
-            change =
-                ((price - previous) / previous) * 100;
-        }
-
-        return {
-            symbol,
-            price,
-            change
-        };
-
-    } catch {
-
-        return {
-            symbol,
-            price: 0,
-            change: 0
-        };
+        return [];
     }
 }
 
 
-async function stockMarket() {
+function writeUsers(users) {
 
-    const symbols = [
-        "AAPL",
-        "TSLA",
-        "NVDA",
-        "MSFT",
-        "AMZN",
-        "GOOGL",
-        "META"
-    ];
-
-    const result = {};
-
-    await Promise.all(
-        symbols.map(async symbol => {
-            result[symbol] =
-                await stockQuote(symbol);
-        })
+    fs.writeFileSync(
+        USERS_FILE,
+        JSON.stringify(
+            users,
+            null,
+            2
+        ),
+        "utf8"
     );
-
-    return {
-        ...result,
-        updatedAt: new Date().toISOString()
-    };
 }
 
 
-// ============================================================
-// COMPLETE MARKET
-// ============================================================
+/* ============================================================
+   BODY
+============================================================ */
+
+function body(req) {
+
+    return new Promise(
+        (resolve, reject) => {
+
+            let data = "";
+
+            req.on(
+                "data",
+                chunk => {
+                    data += chunk;
+                }
+            );
+
+            req.on(
+                "end",
+                () => {
+
+                    if (!data) {
+                        return resolve({});
+                    }
+
+                    try {
+
+                        resolve(
+                            JSON.parse(data)
+                        );
+
+                    } catch (error) {
+
+                        reject(
+                            new Error(
+                                "Invalid JSON"
+                            )
+                        );
+
+                    }
+
+                }
+            );
+
+            req.on(
+                "error",
+                reject
+            );
+
+        }
+    );
+}
+
+
+/* ============================================================
+   JSON RESPONSE
+============================================================ */
+
+function sendJSON(
+    res,
+    status,
+    data
+) {
+
+    res.writeHead(
+        status,
+        {
+            "Content-Type":
+                "application/json; charset=utf-8",
+
+            "Cache-Control":
+                "no-store",
+
+            "Access-Control-Allow-Origin":
+                "*",
+
+            "Access-Control-Allow-Headers":
+                "Content-Type, Authorization",
+
+            "Access-Control-Allow-Methods":
+                "GET,POST,PATCH,OPTIONS"
+        }
+    );
+
+    res.end(
+        JSON.stringify(data)
+    );
+}
+
+
+/* ============================================================
+   ADMIN SESSIONS
+============================================================ */
+
+const adminSessions =
+    new Map();
+
+
+function adminAuth(req) {
+
+    const header =
+        req.headers.authorization || "";
+
+    if (
+        !header.startsWith(
+            "Bearer "
+        )
+    ) {
+        return false;
+    }
+
+    const token =
+        header.substring(7);
+
+    return adminSessions.has(
+        token
+    );
+}
+
+
+/* ============================================================
+   MARKET DATA
+============================================================ */
+
+function getJSON(url) {
+
+    return new Promise(
+        (resolve, reject) => {
+
+            https.get(
+                url,
+                {
+                    headers: {
+                        "User-Agent":
+                            "Noon-Market"
+                    }
+                },
+                response => {
+
+                    let data = "";
+
+                    response.on(
+                        "data",
+                        chunk => {
+                            data += chunk;
+                        }
+                    );
+
+                    response.on(
+                        "end",
+                        () => {
+
+                            try {
+
+                                resolve(
+                                    JSON.parse(
+                                        data
+                                    )
+                                );
+
+                            } catch (error) {
+
+                                reject(
+                                    error
+                                );
+
+                            }
+
+                        }
+                    );
+
+                }
+            ).on(
+                "error",
+                reject
+            );
+
+        }
+    );
+}
+
 
 async function market() {
 
-    const [crypto, stocks] =
-        await Promise.all([
-            cryptoMarket(),
-            stockMarket()
-        ]);
+    const data =
+        await getJSON(
+            "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,tether,binancecoin&vs_currencies=usd&include_24hr_change=true"
+        );
+
 
     return {
-        crypto,
-        stocks,
-        updatedAt: new Date().toISOString()
+
+        btc: {
+            price:
+                Number(
+                    data.bitcoin?.usd || 0
+                ),
+
+            change:
+                Number(
+                    data.bitcoin?.usd_24h_change || 0
+                )
+        },
+
+        eth: {
+            price:
+                Number(
+                    data.ethereum?.usd || 0
+                ),
+
+            change:
+                Number(
+                    data.ethereum?.usd_24h_change || 0
+                )
+        },
+
+        usdt: {
+            price:
+                Number(
+                    data.tether?.usd || 0
+                ),
+
+            change:
+                Number(
+                    data.tether?.usd_24h_change || 0
+                )
+        },
+
+        bnb: {
+            price:
+                Number(
+                    data.binancecoin?.usd || 0
+                ),
+
+            change:
+                Number(
+                    data.binancecoin?.usd_24h_change || 0
+                )
+        }
+
     };
 }
 
 
-// ============================================================
-// WEBSITE
-// ============================================================
+/* ============================================================
+   WEBSITE PAGE
+============================================================ */
 
 function page() {
 
-return `<!doctype html>
+    return `
+<!doctype html>
+
 <html lang="en">
 
 <head>
@@ -246,8 +341,8 @@ return `<!doctype html>
 <meta charset="utf-8">
 
 <meta
-    name="viewport"
-    content="width=device-width,initial-scale=1"
+name="viewport"
+content="width=device-width,initial-scale=1"
 >
 
 <title>Noon Market</title>
@@ -258,724 +353,15 @@ return `<!doctype html>
     box-sizing:border-box;
 }
 
-html{
-    scroll-behavior:smooth;
-}
-
 body{
     margin:0;
-    background:
-        radial-gradient(
-            circle at 10% 10%,
-            rgba(39,255,190,.08),
-            transparent 30%
-        ),
-        radial-gradient(
-            circle at 90% 20%,
-            rgba(90,100,255,.12),
-            transparent 30%
-        ),
-        #06090f;
-    color:#f5f7fa;
-    font:15px Arial,sans-serif;
+    font-family:Arial,Helvetica,sans-serif;
+    background:#050505;
+    color:#fff;
 }
 
-button,
-input{
-    font-family:inherit;
-}
-
-.app{
+#root{
     min-height:100vh;
-    padding-bottom:90px;
-}
-
-header{
-    height:74px;
-    background:rgba(8,12,20,.88);
-    backdrop-filter:blur(18px);
-    border-bottom:1px solid rgba(255,255,255,.08);
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    padding:0 22px;
-    position:sticky;
-    top:0;
-    z-index:50;
-}
-
-.logo{
-    font-size:23px;
-    font-weight:900;
-    letter-spacing:-.6px;
-}
-
-.logo span{
-    color:#19e6a1;
-}
-
-.header-right{
-    display:flex;
-    align-items:center;
-    gap:10px;
-}
-
-.live-dot{
-    width:8px;
-    height:8px;
-    border-radius:50%;
-    background:#19e6a1;
-    box-shadow:0 0 12px #19e6a1;
-}
-
-.live-text{
-    font-size:11px;
-    color:#9aa4b2;
-    letter-spacing:.7px;
-}
-
-.signout{
-    border:1px solid rgba(255,255,255,.1);
-    background:#101620;
-    color:#fff;
-    border-radius:11px;
-    padding:9px 13px;
-    cursor:pointer;
-}
-
-.container{
-    width:min(980px,100%);
-    margin:auto;
-    padding:24px 18px;
-}
-
-.login{
-    min-height:100vh;
-    display:grid;
-    place-items:center;
-    padding:20px;
-    background:
-        radial-gradient(
-            circle at 50% 20%,
-            rgba(25,230,161,.13),
-            transparent 35%
-        ),
-        #06090f;
-}
-
-.login-box{
-    width:min(430px,100%);
-    padding:34px;
-    border-radius:28px;
-    background:
-        linear-gradient(
-            145deg,
-            rgba(255,255,255,.075),
-            rgba(255,255,255,.025)
-        );
-    border:1px solid rgba(255,255,255,.1);
-    box-shadow:
-        0 30px 90px rgba(0,0,0,.55),
-        inset 0 1px 0 rgba(255,255,255,.08);
-    backdrop-filter:blur(20px);
-}
-
-.login-logo{
-    width:62px;
-    height:62px;
-    display:grid;
-    place-items:center;
-    border-radius:18px;
-    background:
-        linear-gradient(
-            135deg,
-            #19e6a1,
-            #0ba77a
-        );
-    color:#03140f;
-    font-size:27px;
-    font-weight:900;
-    margin-bottom:20px;
-    box-shadow:0 12px 35px rgba(25,230,161,.22);
-}
-
-.login-box h1{
-    font-size:31px;
-    margin:0 0 7px;
-    letter-spacing:-1px;
-}
-
-.login-box p{
-    margin:0 0 25px;
-}
-
-input{
-    width:100%;
-    padding:15px 16px;
-    margin:6px 0 11px;
-    background:#0c121b;
-    color:#fff;
-    border:1px solid #202a38;
-    border-radius:13px;
-    outline:none;
-    transition:.2s;
-}
-
-input:focus{
-    border-color:#19e6a1;
-    box-shadow:0 0 0 3px rgba(25,230,161,.08);
-}
-
-.btn{
-    width:100%;
-    padding:15px;
-    border:0;
-    border-radius:13px;
-    background:
-        linear-gradient(
-            135deg,
-            #19e6a1,
-            #0dbb84
-        );
-    color:#02150f;
-    font-weight:900;
-    cursor:pointer;
-    box-shadow:0 12px 30px rgba(25,230,161,.16);
-}
-
-.auth-switch{
-    text-align:center;
-    margin-top:18px;
-    color:#7f8b9a;
-}
-
-.auth-switch button{
-    border:0;
-    background:none;
-    color:#19e6a1;
-    font-weight:800;
-    cursor:pointer;
-}
-
-.muted{
-    color:#8994a3;
-}
-
-.hero{
-    position:relative;
-    overflow:hidden;
-    border-radius:28px;
-    padding:27px;
-    margin-bottom:16px;
-    background:
-        radial-gradient(
-            circle at 90% 10%,
-            rgba(25,230,161,.22),
-            transparent 32%
-        ),
-        radial-gradient(
-            circle at 15% 90%,
-            rgba(91,96,255,.2),
-            transparent 35%
-        ),
-        linear-gradient(
-            135deg,
-            #101923,
-            #0a1018
-        );
-    border:1px solid rgba(255,255,255,.09);
-    box-shadow:0 22px 55px rgba(0,0,0,.25);
-}
-
-.hero::after{
-    content:"₮";
-    position:absolute;
-    right:25px;
-    top:-15px;
-    font-size:150px;
-    font-weight:900;
-    color:rgba(25,230,161,.035);
-}
-
-.hero-top{
-    display:flex;
-    justify-content:space-between;
-    align-items:center;
-    position:relative;
-    z-index:2;
-}
-
-.hero-label{
-    color:#9ca8b7;
-    font-size:12px;
-    text-transform:uppercase;
-    letter-spacing:1.5px;
-}
-
-.balance{
-    font-size:42px;
-    font-weight:900;
-    margin:8px 0;
-    letter-spacing:-1.5px;
-}
-
-.account-mini{
-    color:#a7b0bd;
-    font-size:12px;
-}
-
-.verified{
-    display:inline-flex;
-    align-items:center;
-    gap:6px;
-    border:1px solid rgba(25,230,161,.22);
-    background:rgba(25,230,161,.07);
-    color:#19e6a1;
-    padding:7px 10px;
-    border-radius:999px;
-    font-size:11px;
-}
-
-.section-title{
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    margin:25px 2px 11px;
-}
-
-.section-title h2{
-    font-size:17px;
-    margin:0;
-}
-
-.section-title span{
-    color:#697586;
-    font-size:11px;
-}
-
-.market-grid{
-    display:grid;
-    grid-template-columns:repeat(3,1fr);
-    gap:11px;
-}
-
-.market-card{
-    background:
-        linear-gradient(
-            145deg,
-            rgba(255,255,255,.065),
-            rgba(255,255,255,.025)
-        );
-    border:1px solid rgba(255,255,255,.08);
-    border-radius:19px;
-    padding:17px;
-    min-height:125px;
-    transition:.2s;
-}
-
-.market-card:hover{
-    transform:translateY(-2px);
-    border-color:rgba(25,230,161,.25);
-}
-
-.coin-head{
-    display:flex;
-    justify-content:space-between;
-    align-items:center;
-}
-
-.coin-name{
-    font-weight:900;
-}
-
-.coin-symbol{
-    color:#6f7b8b;
-    font-size:10px;
-    margin-top:3px;
-}
-
-.coin-icon{
-    width:31px;
-    height:31px;
-    border-radius:10px;
-    display:grid;
-    place-items:center;
-    background:#111b27;
-    color:#19e6a1;
-    font-weight:900;
-}
-
-.price{
-    font-size:21px;
-    font-weight:900;
-    margin-top:15px;
-}
-
-.change{
-    display:inline-block;
-    margin-top:6px;
-    font-size:11px;
-    padding:4px 7px;
-    border-radius:7px;
-}
-
-.up{
-    color:#19e6a1;
-    background:rgba(25,230,161,.08);
-}
-
-.down{
-    color:#ff647c;
-    background:rgba(255,100,124,.08);
-}
-
-.actions{
-    display:grid;
-    grid-template-columns:repeat(3,1fr);
-    gap:11px;
-    margin:17px 0;
-}
-
-.action{
-    border:1px solid rgba(255,255,255,.08);
-    background:#0d141e;
-    color:#fff;
-    border-radius:16px;
-    padding:17px 5px;
-    font-weight:800;
-    cursor:pointer;
-    transition:.2s;
-}
-
-.action:hover{
-    background:#121c28;
-    border-color:rgba(25,230,161,.25);
-}
-
-.action-icon{
-    display:block;
-    color:#19e6a1;
-    font-size:21px;
-    margin-bottom:7px;
-}
-
-.card{
-    background:
-        linear-gradient(
-            145deg,
-            rgba(255,255,255,.065),
-            rgba(255,255,255,.025)
-        );
-    border:1px solid rgba(255,255,255,.08);
-    border-radius:21px;
-    padding:21px;
-    box-shadow:0 12px 35px rgba(0,0,0,.14);
-}
-
-.service-card{
-    display:flex;
-    justify-content:space-between;
-    align-items:center;
-    gap:20px;
-}
-
-.service-card h3{
-    margin:0 0 6px;
-}
-
-.service-card p{
-    margin:0;
-}
-
-.small-btn{
-    border:0;
-    border-radius:11px;
-    padding:11px 15px;
-    background:#19e6a1;
-    color:#03140f;
-    font-weight:900;
-    cursor:pointer;
-    white-space:nowrap;
-}
-
-.stock-grid{
-    display:grid;
-    grid-template-columns:repeat(4,1fr);
-    gap:10px;
-}
-
-.stock-card{
-    background:#0c121b;
-    border:1px solid rgba(255,255,255,.07);
-    border-radius:16px;
-    padding:14px;
-}
-
-.stock-symbol{
-    font-weight:900;
-}
-
-.stock-price{
-    font-size:16px;
-    font-weight:800;
-    margin-top:12px;
-}
-
-.stock-change{
-    font-size:10px;
-    margin-top:5px;
-}
-
-.plans{
-    display:grid;
-    gap:12px;
-}
-
-.plan{
-    position:relative;
-    overflow:hidden;
-    background:
-        linear-gradient(
-            135deg,
-            rgba(255,255,255,.065),
-            rgba(255,255,255,.025)
-        );
-    border:1px solid rgba(255,255,255,.08);
-    border-radius:21px;
-    padding:21px;
-}
-
-.plan.featured{
-    border-color:rgba(25,230,161,.35);
-}
-
-.plan-head{
-    display:flex;
-    justify-content:space-between;
-    align-items:center;
-}
-
-.plan-name{
-    font-size:18px;
-    font-weight:900;
-}
-
-.demo-tag{
-    font-size:9px;
-    color:#19e6a1;
-    border:1px solid rgba(25,230,161,.25);
-    border-radius:999px;
-    padding:5px 8px;
-}
-
-.plan-rate{
-    font-size:29px;
-    font-weight:900;
-    margin:12px 0 3px;
-}
-
-.plan-rate span{
-    font-size:12px;
-    color:#778293;
-}
-
-.plan-desc{
-    color:#8994a3;
-    font-size:12px;
-    line-height:1.6;
-}
-
-.plan-button{
-    margin-top:13px;
-    border:0;
-    background:#151e2a;
-    color:#fff;
-    border-radius:10px;
-    padding:10px 13px;
-    font-weight:800;
-}
-
-.info-list{
-    display:grid;
-    gap:10px;
-}
-
-.info-item{
-    padding:15px;
-    border-radius:15px;
-    background:#0c121b;
-    border:1px solid rgba(255,255,255,.06);
-}
-
-.info-item b{
-    display:block;
-    margin-bottom:5px;
-}
-
-.records{
-    background:
-        linear-gradient(
-            145deg,
-            rgba(255,255,255,.06),
-            rgba(255,255,255,.025)
-        );
-    border:1px solid rgba(255,255,255,.08);
-    border-radius:21px;
-    padding:20px;
-}
-
-.record{
-    display:flex;
-    justify-content:space-between;
-    gap:15px;
-    padding:15px 0;
-    border-bottom:1px solid rgba(255,255,255,.06);
-}
-
-.record:last-child{
-    border-bottom:0;
-}
-
-.record-type{
-    font-weight:900;
-}
-
-.record-info{
-    color:#7e8998;
-    font-size:11px;
-    margin-top:4px;
-}
-
-.record-amount{
-    font-weight:900;
-    white-space:nowrap;
-}
-
-.bottom{
-    position:fixed;
-    bottom:0;
-    left:0;
-    right:0;
-    height:74px;
-    background:rgba(7,11,17,.94);
-    backdrop-filter:blur(18px);
-    border-top:1px solid rgba(255,255,255,.08);
-    display:flex;
-    justify-content:space-around;
-    align-items:center;
-    z-index:100;
-}
-
-.nav{
-    border:0;
-    background:none;
-    color:#667283;
-    cursor:pointer;
-    font-size:11px;
-    min-width:60px;
-}
-
-.nav-icon{
-    display:block;
-    font-size:19px;
-    margin-bottom:3px;
-}
-
-.nav:hover{
-    color:#19e6a1;
-}
-
-.page-title{
-    font-size:28px;
-    margin:5px 0 20px;
-}
-
-.notice{
-    border-left:3px solid #19e6a1;
-    padding:13px 15px;
-    background:rgba(25,230,161,.05);
-    color:#a4afbd;
-    border-radius:0 12px 12px 0;
-    font-size:12px;
-    line-height:1.6;
-    margin-bottom:15px;
-}
-
-.account-row{
-    display:flex;
-    justify-content:space-between;
-    padding:16px 0;
-    border-bottom:1px solid rgba(255,255,255,.06);
-}
-
-.account-row:last-child{
-    border-bottom:0;
-}
-
-@media(max-width:760px){
-
-    .market-grid{
-        grid-template-columns:repeat(2,1fr);
-    }
-
-    .stock-grid{
-        grid-template-columns:repeat(2,1fr);
-    }
-}
-
-@media(max-width:560px){
-
-    header{
-        padding:0 15px;
-    }
-
-    .container{
-        padding:17px 13px;
-    }
-
-    .login-box{
-        padding:25px;
-    }
-
-    .balance{
-        font-size:35px;
-    }
-
-    .market-grid{
-        grid-template-columns:1fr 1fr;
-    }
-
-    .actions{
-        grid-template-columns:repeat(3,1fr);
-    }
-
-    .service-card{
-        align-items:flex-start;
-        flex-direction:column;
-    }
-
-    .small-btn{
-        width:100%;
-    }
-
-    .stock-grid{
-        grid-template-columns:1fr 1fr;
-    }
-}
-
-@media(max-width:380px){
-
-    .market-grid{
-        grid-template-columns:1fr;
-    }
-
-    .stock-grid{
-        grid-template-columns:1fr 1fr;
-    }
-
-    .logo{
-        font-size:20px;
-    }
 }
 
 </style>
@@ -988,985 +374,684 @@ input:focus{
 
 <script>
 
-const TG=${JSON.stringify(TG)};
+const API = "";
 
-let u=JSON.parse(
-    localStorage.getItem("nm_user") || "null"
-);
-
-let authMode="login";
-
-const money=n =>
-    "$"+Number(n||0).toLocaleString(
-        undefined,
-        {
-            minimumFractionDigits:2,
-            maximumFractionDigits:2
-        }
+let u =
+    JSON.parse(
+        localStorage.getItem(
+            "nm_user"
+        ) || "null"
     );
 
 
-// ============================================================
-// REFRESH USER
-// ============================================================
+function money(n){
+
+    return "$" +
+        Number(
+            n || 0
+        ).toLocaleString(
+            "en-US",
+            {
+                minimumFractionDigits:2,
+                maximumFractionDigits:2
+            }
+        );
+
+}
+
 
 async function refreshUser(){
 
     if(!u || !u.id){
-        return false;
+        return;
     }
 
     try{
 
-        const response=await fetch(
-            "/api/users/"+
-            encodeURIComponent(u.id)+
-            "?t="+Date.now(),
-            {
-                cache:"no-store"
-            }
-        );
+        const response =
+            await fetch(
+                API +
+                "/api/users/" +
+                encodeURIComponent(
+                    u.id
+                )
+            );
 
-        if(!response.ok){
-            return false;
+        const data =
+            await response.json();
+
+        if(
+            response.ok &&
+            data.user
+        ){
+
+            u = {
+
+                id:
+                    data.user.id,
+
+                email:
+                    data.user.email || "",
+
+                phone:
+                    data.user.phone || "",
+
+                balance:
+                    Number(
+                        data.user.balance || 0
+                    ),
+
+                status:
+                    data.user.status ||
+                    "active",
+
+                records:
+                    data.user.transactions ||
+                    []
+
+            };
+
+
+            localStorage.setItem(
+                "nm_user",
+                JSON.stringify(u)
+            );
+
         }
-
-        const data=await response.json();
-
-        if(!data.user){
-            return false;
-        }
-
-        u={
-            id:data.user.id,
-            email:data.user.email||"",
-            phone:data.user.phone||"",
-            balance:Number(data.user.balance||0),
-            status:data.user.status||"active",
-            records:data.user.transactions||[]
-        };
-
-        localStorage.setItem(
-            "nm_user",
-            JSON.stringify(u)
-        );
-
-        return true;
 
     }catch(error){
 
-        console.error(error);
+        console.error(
+            error
+        );
 
-        return false;
     }
+
 }
 
-
-// ============================================================
-// LOGIN
-// ============================================================
 
 function login(){
 
-    authMode="login";
+    document.getElementById(
+        "root"
+    ).innerHTML = `
 
-    root.innerHTML=
+    <div style="
+        max-width:420px;
+        margin:80px auto;
+        padding:30px;
+    ">
 
-    '<main class="login">'+
+        <h1>
+            NOON MARKET
+        </h1>
 
-    '<section class="login-box">'+
+        <p>
+            Secure account access
+        </p>
 
-    '<div class="login-logo">₮</div>'+
+        <input
+            id="loginEmail"
+            placeholder="Email or phone"
+            style="
+                width:100%;
+                padding:14px;
+                margin:8px 0;
+            "
+        >
 
-    '<h1 id="authTitle">Noon Market</h1>'+
+        <input
+            id="loginPassword"
+            type="password"
+            placeholder="Password"
+            style="
+                width:100%;
+                padding:14px;
+                margin:8px 0;
+            "
+        >
 
-    '<p class="muted" id="authSubtitle">'+
-    'Secure account access'+
-    '</p>'+
+        <button
+            onclick="doLogin()"
+            style="
+                width:100%;
+                padding:14px;
+                margin-top:10px;
+                cursor:pointer;
+            "
+        >
+            Sign In
+        </button>
 
-    '<input id="email" type="text" '+
-    'placeholder="Email address">'+
+        <button
+            onclick="signup()"
+            style="
+                width:100%;
+                padding:14px;
+                margin-top:10px;
+                cursor:pointer;
+            "
+        >
+            Create Account
+        </button>
 
-    '<input id="phone" '+
-    'placeholder="Phone number (optional)">'+
+        <div
+            id="loginError"
+            style="
+                color:#ff5555;
+                margin-top:15px;
+            "
+        ></div>
 
-    '<input id="pass" type="password" '+
-    'placeholder="Password">'+
+    </div>
 
-    '<button class="btn" '+
-    'onclick="submitAuth()">'+
-    'Login'+
-    '</button>'+
+    `;
 
-    '<div class="auth-switch">'+
-
-    '<span id="authSwitchText">'+
-    "Don't have an account? "+
-    '</span>'+
-
-    '<button onclick="toggleAuth()">'+
-    'Create Account'+
-    '</button>'+
-
-    '</div>'+
-
-    '</section>'+
-
-    '</main>';
 }
 
 
-function toggleAuth(){
+async function doLogin(){
 
-    const title=
-        document.getElementById("authTitle");
+    const value =
+        document.getElementById(
+            "loginEmail"
+        ).value.trim();
 
-    const subtitle=
-        document.getElementById("authSubtitle");
+    const password =
+        document.getElementById(
+            "loginPassword"
+        ).value;
 
-    const button=
-        document.querySelector(".login-box > .btn");
-
-    const switchText=
-        document.getElementById("authSwitchText");
-
-    const switchButton=
-        document.querySelector(".auth-switch button");
-
-    if(authMode==="login"){
-
-        authMode="register";
-
-        title.textContent="Create Account";
-
-        subtitle.textContent=
-            "Create your Noon Market account";
-
-        button.textContent="Create Account";
-
-        switchText.textContent=
-            "Already have an account? ";
-
-        switchButton.textContent="Login";
-
-    }else{
-
-        authMode="login";
-
-        title.textContent="Noon Market";
-
-        subtitle.textContent=
-            "Secure account access";
-
-        button.textContent="Login";
-
-        switchText.textContent=
-            "Don't have an account? ";
-
-        switchButton.textContent="Create Account";
-    }
-}
-
-
-// ============================================================
-// AUTH
-// ============================================================
-
-async function submitAuth(){
-
-    const e=
-        document.getElementById("email")
-        .value.trim().toLowerCase();
-
-    const ph=
-        document.getElementById("phone")
-        .value.trim();
-
-    const pw=
-        document.getElementById("pass")
-        .value;
-
-    if(!e&&!ph){
-        return alert(
-            "Enter an email or phone number."
-        );
-    }
-
-    if(!pw){
-        return alert(
-            "Enter your password."
-        );
-    }
 
     try{
 
-        const endpoint=
-            authMode==="register"
-                ? "/api/users"
-                : "/api/login";
-
-        const response=
+        const response =
             await fetch(
-                endpoint,
+                API +
+                "/api/login",
                 {
                     method:"POST",
+
                     headers:{
                         "Content-Type":
                             "application/json"
                     },
-                    body:JSON.stringify({
-                        email:e,
-                        phone:ph,
-                        password:pw
-                    })
+
+                    body:
+                        JSON.stringify({
+
+                            email:value,
+
+                            password:password
+
+                        })
                 }
             );
 
-        const data=
+
+        const data =
             await response.json();
 
-        if(!response.ok){
-            return alert(
+
+        if(
+            !response.ok
+        ){
+
+            document.getElementById(
+                "loginError"
+            ).textContent =
                 data.error ||
-                "Something went wrong."
-            );
+                "Login failed";
+
+            return;
         }
 
-        u={
-            id:data.user.id,
-            email:data.user.email||"",
-            phone:data.user.phone||"",
-            balance:Number(
-                data.user.balance||0
-            ),
-            status:data.user.status||"active",
+
+        u = {
+
+            id:
+                data.user.id,
+
+            email:
+                data.user.email || "",
+
+            phone:
+                data.user.phone || "",
+
+            balance:
+                Number(
+                    data.user.balance || 0
+                ),
+
+            status:
+                data.user.status ||
+                "active",
+
             records:
-                data.user.transactions||[]
+                data.user.transactions ||
+                []
+
         };
+
 
         localStorage.setItem(
             "nm_user",
             JSON.stringify(u)
         );
 
-        await home();
+
+        home();
 
     }catch(error){
 
-        console.error(error);
+        document.getElementById(
+            "loginError"
+        ).textContent =
+            "Backend connection failed.";
+
+    }
+
+}
+
+
+function signup(){
+
+    document.getElementById(
+        "root"
+    ).innerHTML = `
+
+    <div style="
+        max-width:420px;
+        margin:80px auto;
+        padding:30px;
+    ">
+
+        <h1>
+            NOON MARKET
+        </h1>
+
+        <h2>
+            Create Account
+        </h2>
+
+        <input
+            id="signupEmail"
+            placeholder="Email"
+            style="
+                width:100%;
+                padding:14px;
+                margin:8px 0;
+            "
+        >
+
+        <input
+            id="signupPhone"
+            placeholder="Phone"
+            style="
+                width:100%;
+                padding:14px;
+                margin:8px 0;
+            "
+        >
+
+        <input
+            id="signupPassword"
+            type="password"
+            placeholder="Password"
+            style="
+                width:100%;
+                padding:14px;
+                margin:8px 0;
+            "
+        >
+
+        <button
+            onclick="doSignup()"
+            style="
+                width:100%;
+                padding:14px;
+                margin-top:10px;
+            "
+        >
+            Create Account
+        </button>
+
+        <button
+            onclick="login()"
+            style="
+                width:100%;
+                padding:14px;
+                margin-top:10px;
+            "
+        >
+            Back to Login
+        </button>
+
+        <div
+            id="signupError"
+            style="
+                color:#ff5555;
+                margin-top:15px;
+            "
+        ></div>
+
+    </div>
+
+    `;
+
+}
+
+
+async function doSignup(){
+
+    const email =
+        document.getElementById(
+            "signupEmail"
+        ).value.trim();
+
+    const phone =
+        document.getElementById(
+            "signupPhone"
+        ).value.trim();
+
+    const password =
+        document.getElementById(
+            "signupPassword"
+        ).value;
+
+
+    try{
+
+        const response =
+            await fetch(
+                API +
+                "/api/users",
+                {
+                    method:"POST",
+
+                    headers:{
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:
+                        JSON.stringify({
+
+                            email,
+                            phone,
+                            password
+
+                        })
+                }
+            );
+
+
+        const data =
+            await response.json();
+
+
+        if(
+            !response.ok
+        ){
+
+            document.getElementById(
+                "signupError"
+            ).textContent =
+                data.error ||
+                "Account creation failed";
+
+            return;
+        }
+
 
         alert(
-            "Backend connection failed."
+            "Account created successfully. Balance: $0.00"
         );
+
+
+        login();
+
+    }catch(error){
+
+        document.getElementById(
+            "signupError"
+        ).textContent =
+            "Backend connection failed.";
+
     }
+
 }
 
-
-// ============================================================
-// SHELL
-// ============================================================
-
-function shell(content){
-
-    root.innerHTML=
-
-    '<div class="app">'+
-
-    '<header>'+
-
-    '<b class="logo">'+
-    'NOON <span>MARKET</span>'+
-    '</b>'+
-
-    '<div class="header-right">'+
-
-    '<span class="live-dot"></span>'+
-
-    '<span class="live-text">MARKET LIVE</span>'+
-
-    '<button class="signout" '+
-    'onclick="logout()">Sign Out</button>'+
-
-    '</div>'+
-
-    '</header>'+
-
-    '<main class="container">'+
-    content+
-    '</main>'+
-
-    '<nav class="bottom">'+
-
-    '<button class="nav" onclick="home()">'+
-    '<span class="nav-icon">⌂</span>Home'+
-    '</button>'+
-
-    '<button class="nav" onclick="service()">'+
-    '<span class="nav-icon">◉</span>Service'+
-    '</button>'+
-
-    '<button class="nav" onclick="plans()">'+
-    '<span class="nav-icon">◆</span>Plans'+
-    '</button>'+
-
-    '<button class="nav" onclick="records()">'+
-    '<span class="nav-icon">▤</span>Records'+
-    '</button>'+
-
-    '<button class="nav" onclick="account()">'+
-    '<span class="nav-icon">◎</span>Account'+
-    '</button>'+
-
-    '</nav>'+
-
-    '</div>';
-}
-
-
-// ============================================================
-// FORMAT CHANGE
-// ============================================================
-
-function changeHTML(change){
-
-    const n=Number(change||0);
-
-    const cls=n>=0?"up":"down";
-
-    const sign=n>=0?"+":"";
-
-    return '<span class="change '+
-        cls+'">'+
-        sign+
-        n.toFixed(2)+
-        '%</span>';
-}
-
-
-// ============================================================
-// HOME
-// ============================================================
 
 async function home(){
 
     await refreshUser();
 
     if(!u){
-        return login();
+
+        login();
+
+        return;
     }
 
-    shell(
 
-    '<section class="hero">'+
+    document.getElementById(
+        "root"
+    ).innerHTML = `
 
-    '<div class="hero-top">'+
+    <div style="
+        max-width:900px;
+        margin:auto;
+        padding:25px;
+    ">
 
-    '<div>'+
-    '<div class="hero-label">Available Balance</div>'+
-    '<div class="balance">'+
-    money(u.balance)+
-    '</div>'+
-    '<div class="account-mini">'+
-    (u.email||u.phone)+
-    '</div>'+
-    '</div>'+
+        <div style="
+            display:flex;
+            justify-content:space-between;
+            align-items:center;
+        ">
 
-    '<div class="verified">● ACTIVE</div>'+
+            <h1>
+                NOON MARKET
+            </h1>
 
-    '</div>'+
+            <button
+                onclick="logout()"
+            >
+                Sign Out
+            </button>
 
-    '</section>'+
+        </div>
 
-    '<div class="section-title">'+
-    '<h2>Crypto Market</h2>'+
-    '<span>LIVE MARKET DATA</span>'+
-    '</div>'+
 
-    '<section class="market-grid">'+
+        <div style="
+            background:#111;
+            border-radius:18px;
+            padding:30px;
+            margin-top:25px;
+        ">
 
-    cryptoCard("BTC","Bitcoin","₿","btc")+
-    cryptoCard("ETH","Ethereum","Ξ","eth")+
-    cryptoCard("USDT","Tether","₮","usdt")+
-    cryptoCard("BNB","BNB","B","bnb")+
-    cryptoCard("SOL","Solana","S","sol")+
-    cryptoCard("XRP","XRP","X","xrp")+
+            <div>
+                Available Balance
+            </div>
 
-    '</section>'+
+            <div style="
+                font-size:42px;
+                font-weight:bold;
+                margin-top:10px;
+            ">
 
-    '<section class="actions">'+
+                ${
+                    money(
+                        u.balance
+                    )
+                }
 
-    '<button class="action" onclick="service()">'+
-    '<span class="action-icon">＋</span>'+
-    'Deposit'+
-    '</button>'+
+            </div>
 
-    '<button class="action" onclick="service()">'+
-    '<span class="action-icon">↗</span>'+
-    'Withdrawal'+
-    '</button>'+
+            <div style="
+                margin-top:10px;
+                color:#aaa;
+            ">
 
-    '<button class="action" onclick="plans()">'+
-    '<span class="action-icon">◆</span>'+
-    'Plans'+
-    '</button>'+
+                ${
+                    u.email ||
+                    u.phone
+                }
 
-    '</section>'+
+            </div>
 
-    '<div class="section-title">'+
-    '<h2>Market Watch</h2>'+
-    '<span>STOCKS</span>'+
-    '</div>'+
+        </div>
 
-    '<section class="stock-grid">'+
 
-    stockCard("AAPL","Apple")+
-    stockCard("TSLA","Tesla")+
-    stockCard("NVDA","NVIDIA")+
-    stockCard("MSFT","Microsoft")+
-    stockCard("AMZN","Amazon")+
-    stockCard("GOOGL","Alphabet")+
-    stockCard("META","Meta")+
+        <div style="
+            margin-top:30px;
+        ">
 
-    '</section>'+
+            <h2>
+                Crypto Market
+            </h2>
 
-    '<div style="height:10px"></div>'+
+            <div
+                id="market"
+            >
+                Loading market...
+            </div>
 
-    '<div class="card service-card">'+
+        </div>
 
-    '<div>'+
-    '<h3>Customer Service</h3>'+
-    '<p class="muted">Need assistance? Our support channel is available here.</p>'+
-    '</div>'+
 
-    '<button class="small-btn" onclick="service()">'+
-    'Contact Support'+
-    '</button>'+
+        <div style="
+            margin-top:30px;
+        ">
 
-    '</div>'
+            <h3>
+                Account Status
+            </h3>
 
-    );
+            <p>
+                ${
+                    u.status
+                }
+            </p>
 
+        </div>
+
+    </div>
+
+    `;
+
+
+    loadMarket();
+
+}
+
+
+async function loadMarket(){
 
     try{
 
-        const response=
+        const response =
             await fetch(
-                "/api/market?t="+Date.now(),
-                {
-                    cache:"no-store"
-                }
+                API +
+                "/api/market"
             );
 
-        const d=
+        const data =
             await response.json();
 
 
-        const crypto=d.crypto||{};
+        document.getElementById(
+            "market"
+        ).innerHTML = `
 
+        <div style="
+            display:grid;
+            grid-template-columns:
+                repeat(auto-fit,minmax(180px,1fr));
+            gap:15px;
+        ">
 
-        updateCrypto(
-            "btc",
-            crypto.BTC
-        );
+            ${coin(
+                "Bitcoin",
+                data.btc
+            )}
 
-        updateCrypto(
-            "eth",
-            crypto.ETH
-        );
+            ${coin(
+                "Ethereum",
+                data.eth
+            )}
 
-        updateCrypto(
-            "usdt",
-            crypto.USDT
-        );
+            ${coin(
+                "Tether",
+                data.usdt
+            )}
 
-        updateCrypto(
-            "bnb",
-            crypto.BNB
-        );
+            ${coin(
+                "BNB",
+                data.bnb
+            )}
 
-        updateCrypto(
-            "sol",
-            crypto.SOL
-        );
+        </div>
 
-        updateCrypto(
-            "xrp",
-            crypto.XRP
-        );
-
-
-        const stocks=d.stocks||{};
-
-        Object.keys(stocks).forEach(
-            symbol=>{
-                updateStock(
-                    symbol,
-                    stocks[symbol]
-                );
-            }
-        );
+        `;
 
     }catch(error){
 
-        console.error(
-            "Market error:",
-            error
-        );
+        document.getElementById(
+            "market"
+        ).textContent =
+            "Market data unavailable";
+
     }
+
 }
 
 
-function cryptoCard(
-    symbol,
+function coin(
     name,
-    icon,
-    id
+    data
 ){
 
-    return (
+    return `
 
-    '<div class="market-card">'+
+    <div style="
+        background:#111;
+        padding:20px;
+        border-radius:15px;
+    ">
 
-    '<div class="coin-head">'+
+        <b>
+            ${name}
+        </b>
 
-    '<div>'+
-    '<div class="coin-name">'+
-    name+
-    '</div>'+
-    '<div class="coin-symbol">'+
-    symbol+
-    ' / USD</div>'+
-    '</div>'+
+        <div style="
+            font-size:22px;
+            margin-top:10px;
+        ">
 
-    '<div class="coin-icon">'+
-    icon+
-    '</div>'+
+            ${money(data.price)}
 
-    '</div>'+
+        </div>
 
-    '<div id="'+id+'Price" class="price">'+
-    'Loading...'+
-    '</div>'+
+        <div style="
+            margin-top:8px;
+        ">
 
-    '<div id="'+id+'Change">'+
-    '</div>'+
+            ${
+                Number(
+                    data.change || 0
+                ).toFixed(2)
+            }%
 
-    '</div>'
-    );
+        </div>
+
+    </div>
+
+    `;
+
 }
 
-
-function updateCrypto(id,data){
-
-    const price=
-        document.getElementById(
-            id+"Price"
-        );
-
-    const change=
-        document.getElementById(
-            id+"Change"
-        );
-
-    if(!price||!change||!data){
-        return;
-    }
-
-    price.textContent=
-        money(data.price);
-
-    change.innerHTML=
-        changeHTML(data.change);
-}
-
-
-function stockCard(symbol,name){
-
-    return (
-
-    '<div class="stock-card">'+
-
-    '<div class="stock-symbol">'+
-    symbol+
-    '</div>'+
-
-    '<div class="muted" style="font-size:10px;margin-top:3px">'+
-    name+
-    '</div>'+
-
-    '<div id="stock-'+symbol+'" class="stock-price">'+
-    'Loading...'+
-    '</div>'+
-
-    '<div id="stock-change-'+symbol+'" class="stock-change">'+
-    '—'+
-    '</div>'+
-
-    '</div>'
-    );
-}
-
-
-function updateStock(symbol,data){
-
-    const p=
-        document.getElementById(
-            "stock-"+symbol
-        );
-
-    const c=
-        document.getElementById(
-            "stock-change-"+symbol
-        );
-
-    if(!p||!c||!data){
-        return;
-    }
-
-    if(Number(data.price)>0){
-
-        p.textContent=
-            "$"+
-            Number(data.price)
-            .toLocaleString(
-                undefined,
-                {
-                    minimumFractionDigits:2,
-                    maximumFractionDigits:2
-                }
-            );
-
-        const n=
-            Number(data.change||0);
-
-        c.innerHTML=
-            (n>=0?"+":"")+
-            n.toFixed(2)+
-            "% / 24h";
-
-        c.style.color=
-            n>=0
-                ? "#19e6a1"
-                : "#ff647c";
-
-    }else{
-
-        p.textContent=
-            "Unavailable";
-
-        c.textContent=
-            "Market data unavailable";
-    }
-}
-
-
-// ============================================================
-// SERVICE
-// ============================================================
-
-function service(){
-
-    shell(
-
-    '<h1 class="page-title">Customer Service</h1>'+
-
-    '<div class="card">'+
-
-    '<h3>Need assistance?</h3>'+
-
-    '<p class="muted">'+
-    'Contact the Noon Market support channel through Telegram.'+
-    '</p>'+
-
-    '<br>'+
-
-    '<a href="'+
-    TG+
-    '" target="_blank" rel="noopener">'+
-
-    '<button class="btn">'+
-    'Open Customer Service'+
-    '</button>'+
-
-    '</a>'+
-
-    '</div>'
-
-    );
-}
-
-
-// ============================================================
-// PLANS
-// ============================================================
-
-function plans(){
-
-    shell(
-
-    '<h1 class="page-title">Our Plans</h1>'+
-
-    '<div class="notice">'+
-    'The rates shown below are illustrative program examples only. '+
-    'They are not guaranteed returns or investment promises. '+
-    'Actual eligibility and terms should be confirmed through official support.'+
-    '</div>'+
-
-    '<div class="plans">'+
-
-    '<div class="plan">'+
-
-    '<div class="plan-head">'+
-    '<div class="plan-name">Starter Plan</div>'+
-    '<div class="demo-tag">ILLUSTRATIVE</div>'+
-    '</div>'+
-
-    '<div class="plan-rate">7% <span>example rate</span></div>'+
-
-    '<div class="plan-desc">'+
-    'Example deposit level: $50'+
-    '</div>'+
-
-    '<button class="plan-button" onclick="service()">'+
-    'View Information'+
-    '</button>'+
-
-    '</div>'+
-
-
-    '<div class="plan featured">'+
-
-    '<div class="plan-head">'+
-    '<div class="plan-name">Standard Plan</div>'+
-    '<div class="demo-tag">ILLUSTRATIVE</div>'+
-    '</div>'+
-
-    '<div class="plan-rate">11% <span>example rate</span></div>'+
-
-    '<div class="plan-desc">'+
-    'Example deposit level: $500'+
-    '</div>'+
-
-    '<button class="plan-button" onclick="service()">'+
-    'View Information'+
-    '</button>'+
-
-    '</div>'+
-
-
-    '<div class="plan">'+
-
-    '<div class="plan-head">'+
-    '<div class="plan-name">Premium Plan</div>'+
-    '<div class="demo-tag">ILLUSTRATIVE</div>'+
-    '</div>'+
-
-    '<div class="plan-rate">15% <span>example rate</span></div>'+
-
-    '<div class="plan-desc">'+
-    'Example deposit level: $10,000'+
-    '</div>'+
-
-    '<button class="plan-button" onclick="service()">'+
-    'View Information'+
-    '</button>'+
-
-    '</div>'+
-
-    '</div>'+
-
-    '<div style="height:14px"></div>'+
-
-    '<div class="card">'+
-
-    '<h3>Supported Payment Methods</h3>'+
-
-    '<div class="info-list">'+
-
-    '<div class="info-item">'+
-    '<b>🏦 Bank Transfer</b>'+
-    '<span class="muted">Availability depends on country and payment provider.</span>'+
-    '</div>'+
-
-    '<div class="info-item">'+
-    '<b>₿ Cryptocurrency</b>'+
-    '<span class="muted">USDT and other supported cryptocurrencies may be available.</span>'+
-    '</div>'+
-
-    '<div class="info-item">'+
-    '<b>💵 USD Payments</b>'+
-    '<span class="muted">Available payment channels depend on location.</span>'+
-    '</div>'+
-
-    '</div>'+
-
-    '</div>'+
-
-    '<div style="height:14px"></div>'+
-
-    '<div class="card">'+
-
-    '<h3>Withdrawal Information</h3>'+
-
-    '<p class="muted">'+
-    'Withdrawal availability, processing time, minimum limits and applicable fees may vary by payment method and country.'+
-    '</p>'+
-
-    '<button class="small-btn" onclick="service()">'+
-    'Ask Support'+
-    '</button>'+
-
-    '</div>'
-
-    );
-}
-
-
-// ============================================================
-// RECORDS
-// ============================================================
-
-function records(){
-
-    const list=
-        Array.isArray(u?.records)
-            ? u.records
-            : [];
-
-    let html=
-        list.map(x=>{
-
-            const type=
-                x.type||
-                "Transaction";
-
-            const amount=
-                Number(x.amount||0);
-
-            const reason=
-                x.reason||"";
-
-            const time=
-                x.time
-                    ? new Date(
-                        x.time
-                    ).toLocaleString()
-                    : "";
-
-            const isCredit=
-                String(type)
-                    .toLowerCase()
-                    .includes("credit");
-
-            return (
-
-            '<div class="record">'+
-
-            '<div>'+
-
-            '<div class="record-type">'+
-            (isCredit?"＋ ":"− ")+
-            type+
-            '</div>'+
-
-            '<div class="record-info">'+
-            reason+
-            '</div>'+
-
-            '<div class="record-info">'+
-            time+
-            '</div>'+
-
-            '</div>'+
-
-            '<div class="record-amount" style="color:'+
-            (isCredit?"#19e6a1":"#ff647c")+
-            '">'+
-
-            (isCredit?"+":"-")+
-            money(amount)+
-
-            '</div>'+
-
-            '</div>'
-            );
-
-        }).join("");
-
-    if(!html){
-
-        html=
-            '<p class="muted">'+
-            'No transactions yet.'+
-            '</p>';
-    }
-
-    shell(
-
-        '<h1 class="page-title">Records</h1>'+
-
-        '<div class="records">'+
-        html+
-        '</div>'
-    );
-}
-
-
-// ============================================================
-// ACCOUNT
-// ============================================================
-
-async function account(){
-
-    await refreshUser();
-
-    if(!u){
-        return login();
-    }
-
-    shell(
-
-    '<h1 class="page-title">My Account</h1>'+
-
-    '<div class="card">'+
-
-    '<div class="account-row">'+
-    '<span class="muted">Email</span>'+
-    '<b>'+(u.email||"—")+'</b>'+
-    '</div>'+
-
-    '<div class="account-row">'+
-    '<span class="muted">Phone</span>'+
-    '<b>'+(u.phone||"—")+'</b>'+
-    '</div>'+
-
-    '<div class="account-row">'+
-    '<span class="muted">Available Balance</span>'+
-    '<b>'+money(u.balance)+'</b>'+
-    '</div>'+
-
-    '<div class="account-row">'+
-    '<span class="muted">Account Status</span>'+
-    '<b style="color:#19e6a1">'+
-    (u.status||"active").toUpperCase()+
-    '</b>'+
-    '</div>'+
-
-    '<br>'+
-
-    '<button class="btn" onclick="logout()">'+
-    'Sign Out'+
-    '</button>'+
-
-    '</div>'
-
-    );
-}
-
-
-// ============================================================
-// LOGOUT
-// ============================================================
 
 function logout(){
 
@@ -1974,113 +1059,78 @@ function logout(){
         "nm_user"
     );
 
-    u=null;
+    u = null;
 
     login();
+
 }
 
 
-// ============================================================
-// AUTO BALANCE REFRESH
-// ============================================================
-
-setInterval(
-    async()=>{
-
-        if(!u||!u.id){
-            return;
-        }
-
-        const oldBalance=
-            Number(u.balance||0);
-
-        const changed=
-            await refreshUser();
-
-        if(
-            changed &&
-            Number(u.balance||0)!==
-            oldBalance
-        ){
-
-            const current=
-                document.querySelector(
-                    ".balance"
-                );
-
-            if(current){
-
-                const amount=
-                    current.querySelector(
-                        ".balance"
-                    );
-
-            }
-
-            const heroBalance=
-                document.querySelector(
-                    ".hero .balance"
-                );
-
-            if(heroBalance){
-
-                heroBalance.textContent=
-                    money(u.balance);
-            }
-        }
-
-    },
-    5000
-);
-
-
-// ============================================================
-// START
-// ============================================================
-
-if(u&&u.id){
+if(
+    u &&
+    u.id
+){
 
     home();
 
 }else{
 
     login();
+
 }
 
 </script>
 
 </body>
-</html>`;
+
+</html>
+`;
+
 }
 
 
-// ============================================================
-// SERVER
-// ============================================================
+/* ============================================================
+   SERVER
+============================================================ */
 
-const server=
+const server =
     http.createServer(
-        async(req,res)=>{
+        async (
+            req,
+            res
+        ) => {
 
-            const url=
+            const url =
                 new URL(
                     req.url,
-                    "http://127.0.0.1:"+PORT
+                    "http://127.0.0.1:" +
+                    PORT
                 );
 
-            const p=url.pathname;
+            const p =
+                url.pathname;
 
 
-            if(req.method==="OPTIONS"){
+            /* ==================================================
+               CORS
+            ================================================== */
+
+            if(
+                req.method ===
+                "OPTIONS"
+            ){
 
                 res.writeHead(
                     204,
                     {
-                        "Access-Control-Allow-Origin":"*",
+                        "Access-Control-Allow-Origin":
+                            "*",
+
                         "Access-Control-Allow-Headers":
-                            "Content-Type",
+                            "Content-Type, Authorization",
+
                         "Access-Control-Allow-Methods":
-                            "GET,POST,OPTIONS"
+                            "GET,POST,PATCH,OPTIONS"
                     }
                 );
 
@@ -2088,39 +1138,582 @@ const server=
             }
 
 
-            // ====================================================
-            // LOGIN
-            // ====================================================
+            /* ==================================================
+               ADMIN LOGIN
+            ================================================== */
 
             if(
-                req.method==="POST" &&
-                p==="/api/login"
+                req.method === "POST" &&
+                p === "/api/admin/login"
             ){
 
                 try{
 
-                    const data=
+                    const data =
                         await body(req);
 
-                    const email=
-                        String(
-                            data.email||""
-                        )
-                        .trim()
-                        .toLowerCase();
 
-                    const phone=
-                        String(
-                            data.phone||""
-                        )
-                        .trim();
+                    if(
+                        data.username !==
+                            ADMIN_USER ||
+                        data.password !==
+                            ADMIN_PASSWORD
+                    ){
 
-                    const password=
-                        String(
-                            data.password||""
+                        return sendJSON(
+                            res,
+                            401,
+                            {
+                                error:
+                                    "Invalid admin username or password"
+                            }
                         );
 
-                    if(!email&&!phone){
+                    }
+
+
+                    const token =
+                        crypto
+                            .randomBytes(32)
+                            .toString("hex");
+
+
+                    adminSessions.set(
+                        token,
+                        {
+                            created:
+                                Date.now()
+                        }
+                    );
+
+
+                    return sendJSON(
+                        res,
+                        200,
+                        {
+                            success:true,
+                            token
+                        }
+                    );
+
+                }catch(error){
+
+                    return sendJSON(
+                        res,
+                        400,
+                        {
+                            error:
+                                error.message
+                        }
+                    );
+
+                }
+
+            }
+
+
+            /* ==================================================
+               ADMIN USERS
+            ================================================== */
+
+            if(
+                req.method === "GET" &&
+                p === "/api/admin/users"
+            ){
+
+                if(
+                    !adminAuth(req)
+                ){
+
+                    return sendJSON(
+                        res,
+                        401,
+                        {
+                            error:
+                                "Unauthorized"
+                        }
+                    );
+
+                }
+
+
+                const users =
+                    readUsers();
+
+
+                return sendJSON(
+                    res,
+                    200,
+                    {
+                        success:true,
+
+                        users:
+                            users.map(
+                                user => ({
+                                    id:
+                                        user.id,
+
+                                    email:
+                                        user.email ||
+                                        "",
+
+                                    phone:
+                                        user.phone ||
+                                        "",
+
+                                    balance:
+                                        Number(
+                                            user.balance ||
+                                            0
+                                        ),
+
+                                    status:
+                                        user.status ||
+                                        "active",
+
+                                    transactions:
+                                        Array.isArray(
+                                            user.transactions
+                                        )
+                                            ? user.transactions
+                                            : [],
+
+                                    createdAt:
+                                        user.createdAt ||
+                                        ""
+                                })
+                            )
+                    }
+                );
+
+            }
+
+
+            /* ==================================================
+               ADMIN GET USER
+            ================================================== */
+
+            const adminUserMatch =
+                p.match(
+                    /^\/api\/admin\/users\/([^/]+)$/
+                );
+
+
+            if(
+                req.method === "GET" &&
+                adminUserMatch
+            ){
+
+                if(
+                    !adminAuth(req)
+                ){
+
+                    return sendJSON(
+                        res,
+                        401,
+                        {
+                            error:
+                                "Unauthorized"
+                        }
+                    );
+
+                }
+
+
+                const id =
+                    decodeURIComponent(
+                        adminUserMatch[1]
+                    );
+
+
+                const users =
+                    readUsers();
+
+
+                const user =
+                    users.find(
+                        x =>
+                            x.id === id
+                    );
+
+
+                if(!user){
+
+                    return sendJSON(
+                        res,
+                        404,
+                        {
+                            error:
+                                "User not found"
+                        }
+                    );
+
+                }
+
+
+                return sendJSON(
+                    res,
+                    200,
+                    {
+                        success:true,
+
+                        user
+                    }
+                );
+
+            }
+
+
+            /* ==================================================
+               ADMIN CHANGE BALANCE
+            ================================================== */
+
+            const balanceMatch =
+                p.match(
+                    /^\/api\/admin\/users\/([^/]+)\/balance$/
+                );
+
+
+            if(
+                req.method === "POST" &&
+                balanceMatch
+            ){
+
+                if(
+                    !adminAuth(req)
+                ){
+
+                    return sendJSON(
+                        res,
+                        401,
+                        {
+                            error:
+                                "Unauthorized"
+                        }
+                    );
+
+                }
+
+
+                try{
+
+                    const id =
+                        decodeURIComponent(
+                            balanceMatch[1]
+                        );
+
+
+                    const data =
+                        await body(req);
+
+
+                    const amount =
+                        Number(
+                            data.amount
+                        );
+
+
+                    if(
+                        !Number.isFinite(
+                            amount
+                        ) ||
+                        amount <= 0
+                    ){
+
+                        return sendJSON(
+                            res,
+                            400,
+                            {
+                                error:
+                                    "Invalid amount"
+                            }
+                        );
+
+                    }
+
+
+                    const type =
+                        data.type === "debit"
+                            ? "debit"
+                            : "credit";
+
+
+                    const users =
+                        readUsers();
+
+
+                    const user =
+                        users.find(
+                            x =>
+                                x.id === id
+                        );
+
+
+                    if(!user){
+
+                        return sendJSON(
+                            res,
+                            404,
+                            {
+                                error:
+                                    "User not found"
+                            }
+                        );
+
+                    }
+
+
+                    user.balance =
+                        Number(
+                            user.balance || 0
+                        );
+
+
+                    if(
+                        type === "credit"
+                    ){
+
+                        user.balance +=
+                            amount;
+
+                    }else{
+
+                        user.balance -=
+                            amount;
+
+
+                        if(
+                            user.balance < 0
+                        ){
+
+                            user.balance = 0;
+
+                        }
+
+                    }
+
+
+                    if(
+                        !Array.isArray(
+                            user.transactions
+                        )
+                    ){
+
+                        user.transactions = [];
+
+                    }
+
+
+                    user.transactions.push({
+
+                        type,
+
+                        amount,
+
+                        reason:
+                            String(
+                                data.reason ||
+                                ""
+                            ),
+
+                        time:
+                            new Date()
+                                .toISOString()
+
+                    });
+
+
+                    writeUsers(
+                        users
+                    );
+
+
+                    return sendJSON(
+                        res,
+                        200,
+                        {
+                            success:true,
+                            user
+                        }
+                    );
+
+                }catch(error){
+
+                    return sendJSON(
+                        res,
+                        400,
+                        {
+                            error:
+                                error.message
+                        }
+                    );
+
+                }
+
+            }
+
+
+            /* ==================================================
+               ADMIN CHANGE STATUS
+            ================================================== */
+
+            const statusMatch =
+                p.match(
+                    /^\/api\/admin\/users\/([^/]+)\/status$/
+                );
+
+
+            if(
+                req.method === "PATCH" &&
+                statusMatch
+            ){
+
+                if(
+                    !adminAuth(req)
+                ){
+
+                    return sendJSON(
+                        res,
+                        401,
+                        {
+                            error:
+                                "Unauthorized"
+                        }
+                    );
+
+                }
+
+
+                try{
+
+                    const id =
+                        decodeURIComponent(
+                            statusMatch[1]
+                        );
+
+
+                    const data =
+                        await body(req);
+
+
+                    if(
+                        data.status !==
+                            "active" &&
+                        data.status !==
+                            "suspended"
+                    ){
+
+                        return sendJSON(
+                            res,
+                            400,
+                            {
+                                error:
+                                    "Invalid status"
+                            }
+                        );
+
+                    }
+
+
+                    const users =
+                        readUsers();
+
+
+                    const user =
+                        users.find(
+                            x =>
+                                x.id === id
+                        );
+
+
+                    if(!user){
+
+                        return sendJSON(
+                            res,
+                            404,
+                            {
+                                error:
+                                    "User not found"
+                            }
+                        );
+
+                    }
+
+
+                    user.status =
+                        data.status;
+
+
+                    writeUsers(
+                        users
+                    );
+
+
+                    return sendJSON(
+                        res,
+                        200,
+                        {
+                            success:true,
+                            user
+                        }
+                    );
+
+                }catch(error){
+
+                    return sendJSON(
+                        res,
+                        400,
+                        {
+                            error:
+                                error.message
+                        }
+                    );
+
+                }
+
+            }
+
+
+            /* ==================================================
+               CUSTOMER LOGIN
+            ================================================== */
+
+            if(
+                req.method === "POST" &&
+                p === "/api/login"
+            ){
+
+                try{
+
+                    const data =
+                        await body(req);
+
+
+                    const email =
+                        String(
+                            data.email || ""
+                        )
+                            .trim()
+                            .toLowerCase();
+
+
+                    const phone =
+                        String(
+                            data.phone || ""
+                        )
+                            .trim();
+
+
+                    const password =
+                        String(
+                            data.password || ""
+                        );
+
+
+                    if(
+                        !email &&
+                        !phone
+                    ){
 
                         return sendJSON(
                             res,
@@ -2130,7 +1723,9 @@ const server=
                                     "Enter an email or phone number."
                             }
                         );
+
                     }
+
 
                     if(!password){
 
@@ -2142,35 +1737,44 @@ const server=
                                     "Enter your password."
                             }
                         );
+
                     }
 
-                    const users=
+
+                    const users =
                         readUsers();
 
-                    const user=
-                        users.find(x=>{
 
-                            const emailMatch=
-                                email &&
-                                String(
-                                    x.email||""
-                                )
-                                .toLowerCase()===
-                                email;
+                    const user =
+                        users.find(
+                            x => {
 
-                            const phoneMatch=
-                                phone &&
-                                String(
-                                    x.phone||""
-                                )
-                                .trim()===
-                                phone;
+                                const emailMatch =
+                                    email &&
+                                    String(
+                                        x.email || ""
+                                    )
+                                        .toLowerCase() ===
+                                    email;
 
-                            return(
-                                emailMatch||
-                                phoneMatch
-                            );
-                        });
+
+                                const phoneMatch =
+                                    phone &&
+                                    String(
+                                        x.phone || ""
+                                    )
+                                        .trim() ===
+                                    phone;
+
+
+                                return (
+                                    emailMatch ||
+                                    phoneMatch
+                                );
+
+                            }
+                        );
+
 
                     if(!user){
 
@@ -2182,12 +1786,15 @@ const server=
                                     "Account not found."
                             }
                         );
+
                     }
+
 
                     if(
                         String(
-                            user.password||""
-                        )!==password
+                            user.password ||
+                            ""
+                        ) !== password
                     ){
 
                         return sendJSON(
@@ -2198,11 +1805,14 @@ const server=
                                     "Incorrect password."
                             }
                         );
+
                     }
+
 
                     if(
                         user.status &&
-                        user.status!=="active"
+                        user.status !==
+                            "active"
                     ){
 
                         return sendJSON(
@@ -2213,37 +1823,47 @@ const server=
                                     "This account is suspended."
                             }
                         );
+
                     }
+
 
                     return sendJSON(
                         res,
                         200,
                         {
+
                             success:true,
 
                             user:{
-                                id:user.id,
+
+                                id:
+                                    user.id,
 
                                 email:
-                                    user.email||"",
+                                    user.email ||
+                                    "",
 
                                 phone:
-                                    user.phone||"",
+                                    user.phone ||
+                                    "",
 
                                 balance:
                                     Number(
-                                        user.balance||0
+                                        user.balance ||
+                                        0
                                     ),
 
                                 status:
-                                    user.status||
+                                    user.status ||
                                     "active",
 
                                 transactions:
-                                    user.transactions||
-                                    user.records||
+                                    user.transactions ||
+                                    user.records ||
                                     []
+
                             }
+
                         }
                     );
 
@@ -2253,46 +1873,56 @@ const server=
                         res,
                         400,
                         {
-                            error:error.message
+                            error:
+                                error.message
                         }
                     );
+
                 }
+
             }
 
 
-            // ====================================================
-            // CREATE ACCOUNT
-            // ====================================================
+            /* ==================================================
+               CREATE ACCOUNT
+            ================================================== */
 
             if(
-                req.method==="POST" &&
-                p==="/api/users"
+                req.method === "POST" &&
+                p === "/api/users"
             ){
 
                 try{
 
-                    const data=
+                    const data =
                         await body(req);
 
-                    const email=
-                        String(
-                            data.email||""
-                        )
-                        .trim()
-                        .toLowerCase();
 
-                    const phone=
+                    const email =
                         String(
-                            data.phone||""
+                            data.email || ""
                         )
-                        .trim();
+                            .trim()
+                            .toLowerCase();
 
-                    const password=
+
+                    const phone =
                         String(
-                            data.password||""
+                            data.phone || ""
+                        )
+                            .trim();
+
+
+                    const password =
+                        String(
+                            data.password || ""
                         );
 
-                    if(!email&&!phone){
+
+                    if(
+                        !email &&
+                        !phone
+                    ){
 
                         return sendJSON(
                             res,
@@ -2302,7 +1932,9 @@ const server=
                                     "Email or phone is required"
                             }
                         );
+
                     }
+
 
                     if(!password){
 
@@ -2314,32 +1946,39 @@ const server=
                                     "Password is required"
                             }
                         );
+
                     }
 
-                    const users=
+
+                    const users =
                         readUsers();
 
-                    const exists=
-                        users.find(user=>
 
-                            (
-                                email &&
-                                String(
-                                    user.email||""
-                                )
-                                .toLowerCase()===
-                                email
-                            )||
+                    const exists =
+                        users.find(
+                            user =>
 
-                            (
-                                phone &&
-                                String(
-                                    user.phone||""
+                                (
+                                    email &&
+                                    String(
+                                        user.email ||
+                                        ""
+                                    )
+                                        .toLowerCase() ===
+                                    email
+                                ) ||
+
+                                (
+                                    phone &&
+                                    String(
+                                        user.phone ||
+                                        ""
+                                    )
+                                        .trim() ===
+                                    phone
                                 )
-                                .trim()===
-                                phone
-                            )
                         );
+
 
                     if(exists){
 
@@ -2351,14 +1990,16 @@ const server=
                                     "Account already exists. Please use Login."
                             }
                         );
+
                     }
 
-                    const user={
+
+                    const user = {
 
                         id:
-                            "user_"+
-                            Date.now()+
-                            "_"+
+                            "user_" +
+                            Date.now() +
+                            "_" +
                             Math.random()
                                 .toString(36)
                                 .slice(2,8),
@@ -2378,27 +2019,52 @@ const server=
                         createdAt:
                             new Date()
                                 .toISOString()
+
                     };
 
-                    users.push(user);
 
-                    writeUsers(users);
+                    users.push(
+                        user
+                    );
+
+
+                    writeUsers(
+                        users
+                    );
+
 
                     return sendJSON(
                         res,
                         201,
                         {
+
                             success:true,
 
                             user:{
-                                id:user.id,
-                                email:user.email,
-                                phone:user.phone,
-                                balance:user.balance,
-                                status:user.status,
-                                transactions:user.transactions,
-                                createdAt:user.createdAt
+
+                                id:
+                                    user.id,
+
+                                email:
+                                    user.email,
+
+                                phone:
+                                    user.phone,
+
+                                balance:
+                                    user.balance,
+
+                                status:
+                                    user.status,
+
+                                transactions:
+                                    user.transactions,
+
+                                createdAt:
+                                    user.createdAt
+
                             }
+
                         }
                     );
 
@@ -2408,39 +2074,47 @@ const server=
                         res,
                         400,
                         {
-                            error:error.message
+                            error:
+                                error.message
                         }
                     );
+
                 }
+
             }
 
 
-            // ====================================================
-            // GET USER
-            // ====================================================
+            /* ==================================================
+               GET CUSTOMER USER
+            ================================================== */
 
-            const userMatch=
+            const userMatch =
                 p.match(
                     /^\/api\/users\/([^/]+)$/
                 );
 
+
             if(
-                req.method==="GET" &&
+                req.method === "GET" &&
                 userMatch
             ){
 
-                const id=
+                const id =
                     decodeURIComponent(
                         userMatch[1]
                     );
 
-                const users=
+
+                const users =
                     readUsers();
 
-                const user=
+
+                const user =
                     users.find(
-                        x=>x.id===id
+                        x =>
+                            x.id === id
                     );
+
 
                 if(!user){
 
@@ -2452,49 +2126,103 @@ const server=
                                 "User not found"
                         }
                     );
+
                 }
+
 
                 return sendJSON(
                     res,
                     200,
                     {
+
                         success:true,
 
                         user:{
-                            id:user.id,
+
+                            id:
+                                user.id,
 
                             email:
-                                user.email||"",
+                                user.email ||
+                                "",
 
                             phone:
-                                user.phone||"",
+                                user.phone ||
+                                "",
 
                             balance:
                                 Number(
-                                    user.balance||0
+                                    user.balance ||
+                                    0
                                 ),
 
                             status:
-                                user.status||
+                                user.status ||
                                 "active",
 
                             transactions:
-                                user.transactions||
-                                user.records||
+                                user.transactions ||
+                                user.records ||
                                 []
+
                         }
+
                     }
                 );
+
             }
 
 
-            // ====================================================
-            // HOME
-            // ====================================================
+            /* ==================================================
+               MARKET
+            ================================================== */
 
             if(
-                req.method==="GET" &&
-                p==="/"
+                req.method === "GET" &&
+                p === "/api/market"
+            ){
+
+                try{
+
+                    const data =
+                        await market();
+
+
+                    return sendJSON(
+                        res,
+                        200,
+                        data
+                    );
+
+                }catch(error){
+
+                    console.error(
+                        "Market:",
+                        error
+                    );
+
+
+                    return sendJSON(
+                        res,
+                        502,
+                        {
+                            error:
+                                "Market data unavailable"
+                        }
+                    );
+
+                }
+
+            }
+
+
+            /* ==================================================
+               HOME
+            ================================================== */
+
+            if(
+                req.method === "GET" &&
+                p === "/"
             ){
 
                 res.writeHead(
@@ -2508,99 +2236,75 @@ const server=
                     }
                 );
 
+
                 return res.end(
                     page()
                 );
+
             }
 
 
-            // ====================================================
-            // MARKET
-            // ====================================================
-
-            if(
-                req.method==="GET" &&
-                p==="/api/market"
-            ){
-
-                try{
-
-                    const d=
-                        await market();
-
-                    return sendJSON(
-                        res,
-                        200,
-                        d
-                    );
-
-                }catch(error){
-
-                    console.error(
-                        "Market:",
-                        error
-                    );
-
-                    return sendJSON(
-                        res,
-                        502,
-                        {
-                            error:
-                                "Market data unavailable"
-                        }
-                    );
-                }
-            }
-
+            /* ==================================================
+               404
+            ================================================== */
 
             return sendJSON(
                 res,
                 404,
                 {
-                    error:"Not found"
+                    error:
+                        "Not found"
                 }
             );
+
         }
     );
 
 
-// ============================================================
-// SERVER ERROR
-// ============================================================
+/* ============================================================
+   SERVER ERROR
+============================================================ */
 
 server.on(
     "error",
-    error=>{
+    error => {
 
         if(
-            error.code==="EADDRINUSE"
+            error.code ===
+            "EADDRINUSE"
         ){
 
             console.error(
-                "Port "+
-                PORT+
+                "Port " +
+                PORT +
                 " is already in use."
             );
 
             return;
         }
 
-        console.error(error);
+
+        console.error(
+            error
+        );
+
     }
 );
 
 
-// ============================================================
-// START
-// ============================================================
+/* ============================================================
+   START
+============================================================ */
 
 server.listen(
     PORT,
     "0.0.0.0",
     () => {
+
         console.log(
             "Noon Market server running on port " +
             PORT
         );
+
     }
 );
