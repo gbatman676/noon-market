@@ -1,0 +1,12 @@
+{
+  "name": "noon-market",
+  "version": "1.0.0",
+  "description": "Node.js web application",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": "24.x"
+  }
+}
