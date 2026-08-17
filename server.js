@@ -1,90 +1,57 @@
+"use strict";
+
 const http = require("http");
-const https = require("https");
-const fs = require("fs");
-const path = require("path");
-const crypto = require("crypto");
 
-const PORT = process.env.PORT || 3000;
+const PORT = 3001;
 
-const ADMIN_USER =
-    process.env.ADMIN_USER || "admin";
+const LIVE_SERVER =
+    "https://noon-market.onrender.com";
 
-const ADMIN_PASSWORD =
-    process.env.ADMIN_PASSWORD || "ChangeMe123!";
 
-const DATA_DIR =
-    path.join(__dirname, "data");
+// ============================================================
+// HELPERS
+// ============================================================
 
-const USERS_FILE =
-    path.join(DATA_DIR, "users.json");
+function sendJSON(res, status, data) {
 
-if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, {
-        recursive: true
+    res.writeHead(status, {
+        "Content-Type":
+            "application/json; charset=utf-8",
+
+        "Cache-Control":
+            "no-store",
+
+        "Access-Control-Allow-Origin":
+            "*",
+
+        "Access-Control-Allow-Headers":
+            "Content-Type, Authorization",
+
+        "Access-Control-Allow-Methods":
+            "GET, POST, PATCH, OPTIONS"
     });
-}
 
-if (!fs.existsSync(USERS_FILE)) {
-    fs.writeFileSync(
-        USERS_FILE,
-        "[]",
-        "utf8"
+    res.end(
+        JSON.stringify(data)
     );
 }
 
 
-/* ============================================================
-   USERS
-============================================================ */
+function sendHTML(res, html) {
 
-function readUsers() {
+    res.writeHead(200, {
+        "Content-Type":
+            "text/html; charset=utf-8",
 
-    try {
+        "Cache-Control":
+            "no-store"
+    });
 
-        const data =
-            fs.readFileSync(
-                USERS_FILE,
-                "utf8"
-            );
-
-        const users =
-            JSON.parse(data);
-
-        return Array.isArray(users)
-            ? users
-            : [];
-
-    } catch (error) {
-
-        console.error(
-            "readUsers:",
-            error.message
-        );
-
-        return [];
-    }
+    res.end(html);
 }
 
 
-function writeUsers(users) {
-
-    fs.writeFileSync(
-        USERS_FILE,
-        JSON.stringify(
-            users,
-            null,
-            2
-        ),
-        "utf8"
-    );
-}
-
-
-/* ============================================================
-   BODY
-============================================================ */
-
-function body(req) {
+function readBody(req) {
 
     return new Promise(
         (resolve, reject) => {
@@ -135,204 +102,108 @@ function body(req) {
 }
 
 
-/* ============================================================
-   JSON RESPONSE
-============================================================ */
+// ============================================================
+// REQUEST TO LIVE RENDER SERVER
+// ============================================================
 
-function sendJSON(
-    res,
-    status,
-    data
+async function liveRequest(
+    method,
+    route,
+    token = "",
+    data = null
 ) {
 
-    res.writeHead(
-        status,
-        {
-            "Content-Type":
-                "application/json; charset=utf-8",
-
-            "Cache-Control":
-                "no-store",
-
-            "Access-Control-Allow-Origin":
-                "*",
-
-            "Access-Control-Allow-Headers":
-                "Content-Type, Authorization",
-
-            "Access-Control-Allow-Methods":
-                "GET,POST,PATCH,OPTIONS"
+    const options = {
+        method,
+        headers: {
+            "Accept":
+                "application/json"
         }
-    );
-
-    res.end(
-        JSON.stringify(data)
-    );
-}
+    };
 
 
-/* ============================================================
-   ADMIN SESSIONS
-============================================================ */
+    if (token) {
 
-const adminSessions =
-    new Map();
+        options.headers.Authorization =
+            "Bearer " + token;
 
-
-function adminAuth(req) {
-
-    const header =
-        req.headers.authorization || "";
-
-    if (
-        !header.startsWith(
-            "Bearer "
-        )
-    ) {
-        return false;
     }
 
-    const token =
-        header.substring(7);
 
-    return adminSessions.has(
-        token
-    );
-}
+    if (data !== null) {
 
+        options.headers[
+            "Content-Type"
+        ] =
+            "application/json";
 
-/* ============================================================
-   MARKET DATA
-============================================================ */
+        options.body =
+            JSON.stringify(data);
 
-function getJSON(url) {
-
-    return new Promise(
-        (resolve, reject) => {
-
-            https.get(
-                url,
-                {
-                    headers: {
-                        "User-Agent":
-                            "Noon-Market"
-                    }
-                },
-                response => {
-
-                    let data = "";
-
-                    response.on(
-                        "data",
-                        chunk => {
-                            data += chunk;
-                        }
-                    );
-
-                    response.on(
-                        "end",
-                        () => {
-
-                            try {
-
-                                resolve(
-                                    JSON.parse(
-                                        data
-                                    )
-                                );
-
-                            } catch (error) {
-
-                                reject(
-                                    error
-                                );
-
-                            }
-
-                        }
-                    );
-
-                }
-            ).on(
-                "error",
-                reject
-            );
-
-        }
-    );
-}
+    }
 
 
-async function market() {
-
-    const data =
-        await getJSON(
-            "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,tether,binancecoin&vs_currencies=usd&include_24hr_change=true"
+    const response =
+        await fetch(
+            LIVE_SERVER + route,
+            options
         );
 
 
+    const text =
+        await response.text();
+
+
+    let result;
+
+    try {
+
+        result =
+            JSON.parse(text);
+
+    } catch {
+
+        result = {
+            error:
+                text ||
+                "Invalid server response"
+        };
+
+    }
+
+
     return {
+        status:
+            response.status,
 
-        btc: {
-            price:
-                Number(
-                    data.bitcoin?.usd || 0
-                ),
-
-            change:
-                Number(
-                    data.bitcoin?.usd_24h_change || 0
-                )
-        },
-
-        eth: {
-            price:
-                Number(
-                    data.ethereum?.usd || 0
-                ),
-
-            change:
-                Number(
-                    data.ethereum?.usd_24h_change || 0
-                )
-        },
-
-        usdt: {
-            price:
-                Number(
-                    data.tether?.usd || 0
-                ),
-
-            change:
-                Number(
-                    data.tether?.usd_24h_change || 0
-                )
-        },
-
-        bnb: {
-            price:
-                Number(
-                    data.binancecoin?.usd || 0
-                ),
-
-            change:
-                Number(
-                    data.binancecoin?.usd_24h_change || 0
-                )
-        }
-
+        data:
+            result
     };
 }
 
 
-/* ============================================================
-   WEBSITE PAGE
-============================================================ */
+// ============================================================
+// ESCAPE HTML
+// ============================================================
 
-function page() {
+function escapeHTML(value) {
 
-    return `
-<!doctype html>
+    return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+}
+
+
+// ============================================================
+// ADMIN PAGE
+// ============================================================
+
+function adminPage() {
+
+return `<!doctype html>
 
 <html lang="en">
 
@@ -345,23 +216,519 @@ name="viewport"
 content="width=device-width,initial-scale=1"
 >
 
-<title>Noon Market</title>
+<title>Noon Market Admin</title>
 
 <style>
 
-*{
-    box-sizing:border-box;
+* {
+    box-sizing: border-box;
 }
 
-body{
-    margin:0;
-    font-family:Arial,Helvetica,sans-serif;
-    background:#050505;
-    color:#fff;
+body {
+    margin: 0;
+    background: #06080d;
+    color: #fff;
+    font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
 }
 
-#root{
-    min-height:100vh;
+header {
+
+    height: 70px;
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: space-between;
+
+    padding: 0 25px;
+
+    background: #0d1119;
+
+    border-bottom:
+        1px solid #202735;
+}
+
+.logo {
+
+    font-size: 20px;
+
+    font-weight: 800;
+
+    letter-spacing: 1px;
+}
+
+.logo span {
+    color: #19e6a1;
+}
+
+.container {
+
+    max-width: 1250px;
+
+    margin: auto;
+
+    padding: 25px;
+}
+
+.card {
+
+    background: #0d1119;
+
+    border:
+        1px solid #202735;
+
+    border-radius: 14px;
+
+    padding: 20px;
+
+    margin-bottom: 20px;
+}
+
+.login {
+
+    max-width: 430px;
+
+    margin:
+        100px auto;
+}
+
+h1,
+h2,
+h3 {
+    margin-top: 0;
+}
+
+input,
+select,
+textarea {
+
+    width: 100%;
+
+    padding: 13px;
+
+    margin:
+        8px 0;
+
+    border:
+        1px solid #30394a;
+
+    border-radius: 9px;
+
+    background: #070a10;
+
+    color: white;
+
+    outline: none;
+}
+
+input:focus,
+textarea:focus {
+
+    border-color:
+        #19e6a1;
+}
+
+button {
+
+    border: 0;
+
+    border-radius: 9px;
+
+    padding:
+        11px 16px;
+
+    font-weight: 700;
+
+    cursor: pointer;
+}
+
+.primary {
+
+    background:
+        #19e6a1;
+
+    color:
+        #06100c;
+}
+
+.secondary {
+
+    background:
+        #202938;
+
+    color: white;
+}
+
+.danger {
+
+    background:
+        #e5536e;
+
+    color: white;
+}
+
+.logout {
+
+    background:
+        #202938;
+
+    color: white;
+}
+
+.hidden {
+    display: none !important;
+}
+
+.error {
+
+    color:
+        #ff6179;
+
+    margin-top:
+        10px;
+}
+
+.success {
+
+    color:
+        #19e6a1;
+
+    margin-top:
+        10px;
+}
+
+.toolbar {
+
+    display: flex;
+
+    gap: 10px;
+
+    flex-wrap: wrap;
+
+    align-items: center;
+}
+
+.search {
+
+    flex:
+        1;
+
+    min-width:
+        250px;
+}
+
+.user-grid {
+
+    display: grid;
+
+    grid-template-columns:
+        repeat(
+            auto-fill,
+            minmax(290px, 1fr)
+        );
+
+    gap: 15px;
+}
+
+.user-card {
+
+    background:
+        #080c13;
+
+    border:
+        1px solid #242d3d;
+
+    border-radius:
+        13px;
+
+    padding:
+        17px;
+}
+
+.user-card:hover {
+
+    border-color:
+        #19e6a1;
+}
+
+.user-email {
+
+    font-size:
+        16px;
+
+    font-weight:
+        700;
+
+    word-break:
+        break-word;
+}
+
+.user-phone {
+
+    color:
+        #929bad;
+
+    margin-top:
+        5px;
+}
+
+.user-id {
+
+    color:
+        #687386;
+
+    font-size:
+        11px;
+
+    margin-top:
+        7px;
+
+    word-break:
+        break-all;
+}
+
+.balance {
+
+    font-size:
+        26px;
+
+    font-weight:
+        800;
+
+    margin:
+        18px 0;
+}
+
+.status {
+
+    display:
+        inline-block;
+
+    padding:
+        5px 9px;
+
+    border-radius:
+        20px;
+
+    font-size:
+        11px;
+
+    background:
+        #123125;
+
+    color:
+        #19e6a1;
+}
+
+.status.suspended {
+
+    background:
+        #35151d;
+
+    color:
+        #ff6179;
+}
+
+.actions {
+
+    display:
+        flex;
+
+    gap:
+        8px;
+
+    margin-top:
+        15px;
+
+    flex-wrap:
+        wrap;
+}
+
+.actions button {
+    flex: 1;
+}
+
+.stats {
+
+    display:
+        grid;
+
+    grid-template-columns:
+        repeat(
+            auto-fit,
+            minmax(180px,1fr)
+        );
+
+    gap:
+        12px;
+
+    margin-bottom:
+        20px;
+}
+
+.stat {
+
+    background:
+        #080c13;
+
+    border:
+        1px solid #202735;
+
+    border-radius:
+        12px;
+
+    padding:
+        16px;
+}
+
+.stat-title {
+
+    color:
+        #8c96a8;
+
+    font-size:
+        12px;
+}
+
+.stat-value {
+
+    font-size:
+        23px;
+
+    font-weight:
+        800;
+
+    margin-top:
+        7px;
+}
+
+table {
+
+    width:
+        100%;
+
+    border-collapse:
+        collapse;
+}
+
+th,
+td {
+
+    padding:
+        10px;
+
+    text-align:
+        left;
+
+    border-bottom:
+        1px solid #202735;
+
+    font-size:
+        13px;
+}
+
+.small {
+
+    color:
+        #8c96a8;
+
+    font-size:
+        12px;
+}
+
+.modal {
+
+    position:
+        fixed;
+
+    inset:
+        0;
+
+    background:
+        rgba(
+            0,
+            0,
+            0,
+            .75
+        );
+
+    display:
+        flex;
+
+    align-items:
+        center;
+
+    justify-content:
+        center;
+
+    padding:
+        20px;
+
+    z-index:
+        1000;
+}
+
+.modal-box {
+
+    width:
+        100%;
+
+    max-width:
+        500px;
+
+    background:
+        #0d1119;
+
+    border:
+        1px solid #2a3343;
+
+    border-radius:
+        15px;
+
+    padding:
+        22px;
+}
+
+.modal-actions {
+
+    display:
+        flex;
+
+    gap:
+        10px;
+
+    margin-top:
+        15px;
+}
+
+.modal-actions button {
+    flex: 1;
+}
+
+@media(max-width:600px) {
+
+    header {
+        padding:
+            0 15px;
+    }
+
+    .container {
+        padding:
+            15px;
+    }
+
+    th,
+    td {
+        font-size:
+            11px;
+        padding:
+            7px;
+    }
+
 }
 
 </style>
@@ -370,735 +737,1535 @@ body{
 
 <body>
 
-<div id="root"></div>
+
+<header>
+
+<div class="logo">
+NOON <span>MARKET</span> ADMIN
+</div>
+
+<button
+class="logout"
+onclick="logout()"
+>
+Logout
+</button>
+
+</header>
+
+
+<div class="container">
+
+
+<!-- ========================================================
+     LOGIN
+======================================================== -->
+
+<div
+id="loginScreen"
+class="card login"
+>
+
+<h2>Admin Login</h2>
+
+<div class="small">
+Connect to Noon Market live server
+</div>
+
+<br>
+
+<input
+id="username"
+type="text"
+placeholder="Admin username"
+autocomplete="username"
+>
+
+<input
+id="password"
+type="password"
+placeholder="Admin password"
+autocomplete="current-password"
+>
+
+<button
+class="primary"
+style="width:100%;margin-top:10px"
+onclick="adminLogin()"
+>
+Sign In
+</button>
+
+<div
+id="loginError"
+class="error"
+></div>
+
+</div>
+
+
+<!-- ========================================================
+     APP
+======================================================== -->
+
+<div
+id="app"
+class="hidden"
+>
+
+
+<div class="stats">
+
+<div class="stat">
+
+<div class="stat-title">
+TOTAL CUSTOMERS
+</div>
+
+<div
+id="totalUsers"
+class="stat-value"
+>
+0
+</div>
+
+</div>
+
+
+<div class="stat">
+
+<div class="stat-title">
+TOTAL BALANCE
+</div>
+
+<div
+id="totalBalance"
+class="stat-value"
+>
+$0.00
+</div>
+
+</div>
+
+
+<div class="stat">
+
+<div class="stat-title">
+ACTIVE ACCOUNTS
+</div>
+
+<div
+id="activeUsers"
+class="stat-value"
+>
+0
+</div>
+
+</div>
+
+</div>
+
+
+<!-- ========================================================
+     SEARCH
+======================================================== -->
+
+<div class="card">
+
+<div class="toolbar">
+
+<input
+id="search"
+class="search"
+placeholder="Search customer by email, phone or ID..."
+oninput="searchUsers()"
+>
+
+<button
+class="primary"
+onclick="loadUsers()"
+>
+Refresh
+</button>
+
+</div>
+
+<div
+id="userCount"
+class="small"
+style="margin-top:10px"
+>
+</div>
+
+</div>
+
+
+<!-- ========================================================
+     USERS
+======================================================== -->
+
+<div
+id="users"
+class="user-grid"
+>
+</div>
+
+
+<!-- ========================================================
+     MESSAGE
+======================================================== -->
+
+<div
+id="message"
+></div>
+
+
+</div>
+
+</div>
+
+
+<!-- ========================================================
+     USER MODAL
+======================================================== -->
+
+<div
+id="modal"
+class="modal hidden"
+>
+
+<div class="modal-box">
+
+<h2>
+Account
+</h2>
+
+<div
+id="modalUser"
+></div>
+
+<div
+id="modalMessage"
+></div>
+
+<hr
+style="
+border:0;
+border-top:1px solid #202735;
+margin:20px 0;
+"
+>
+
+<h3>
+Balance Adjustment
+</h3>
+
+<select id="balanceType">
+
+<option value="credit">
+Increase Balance
+</option>
+
+<option value="debit">
+Decrease Balance
+</option>
+
+</select>
+
+<input
+id="amount"
+type="number"
+step="0.01"
+min="0"
+placeholder="Amount"
+>
+
+<input
+id="reason"
+type="text"
+placeholder="Reason"
+>
+
+<div class="modal-actions">
+
+<button
+class="primary"
+onclick="changeBalance()"
+>
+Apply
+</button>
+
+<button
+class="secondary"
+onclick="closeModal()"
+>
+Close
+</button>
+
+</div>
+
+
+<hr
+style="
+border:0;
+border-top:1px solid #202735;
+margin:22px 0;
+"
+>
+
+<h3>
+Account Status
+</h3>
+
+<div class="modal-actions">
+
+<button
+class="primary"
+onclick="changeStatus('active')"
+>
+Activate
+</button>
+
+<button
+class="danger"
+onclick="changeStatus('suspended')"
+>
+Suspend
+</button>
+
+</div>
+
+
+<hr
+style="
+border:0;
+border-top:1px solid #202735;
+margin:22px 0;
+"
+>
+
+<h3>
+Transactions
+</h3>
+
+<div
+id="transactions"
+>
+</div>
+
+</div>
+
+</div>
+
 
 <script>
 
-const API = "";
-
-let u =
-    JSON.parse(
-        localStorage.getItem(
-            "nm_user"
-        ) || "null"
-    );
+const LIVE_SERVER =
+    "https://noon-market.onrender.com";
 
 
-function money(n){
+let token =
+    sessionStorage.getItem(
+        "nm_admin_token"
+    ) || "";
+
+
+let users = [];
+
+
+let selectedUser = null;
+
+
+// ============================================================
+// HTML ESCAPE
+// ============================================================
+
+function esc(value) {
+
+    return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+}
+
+
+// ============================================================
+// FORMAT MONEY
+// ============================================================
+
+function money(value) {
 
     return "$" +
         Number(
-            n || 0
+            value || 0
         ).toLocaleString(
             "en-US",
             {
-                minimumFractionDigits:2,
-                maximumFractionDigits:2
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+            }
+        );
+}
+
+
+// ============================================================
+// API
+// ============================================================
+
+async function api(
+    route,
+    options = {}
+) {
+
+    const headers =
+        Object.assign(
+            {},
+            options.headers || {}
+        );
+
+
+    if (token) {
+
+        headers.Authorization =
+            "Bearer " +
+            token;
+
+    }
+
+
+    options.headers =
+        headers;
+
+
+    const response =
+        await fetch(
+            route,
+            options
+        );
+
+
+    let data = {};
+
+    try {
+
+        data =
+            await response.json();
+
+    } catch {
+
+        data = {
+            error:
+                "Invalid server response"
+        };
+
+    }
+
+
+    if (!response.ok) {
+
+        throw new Error(
+            data.error ||
+            "Request failed"
+        );
+
+    }
+
+
+    return data;
+}
+
+
+// ============================================================
+// ADMIN LOGIN
+// ============================================================
+
+async function adminLogin() {
+
+    const username =
+        document
+        .getElementById("username")
+        .value
+        .trim();
+
+    const password =
+        document
+        .getElementById("password")
+        .value;
+
+
+    if (!username || !password) {
+
+        document
+        .getElementById("loginError")
+        .textContent =
+            "Enter username and password.";
+
+        return;
+    }
+
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/admin/login",
+                {
+                    method:
+                        "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:
+                        JSON.stringify({
+                            username,
+                            password
+                        })
+                }
+            );
+
+
+        const data =
+            await response.json();
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                data.error ||
+                "Login failed"
+            );
+
+        }
+
+
+        token =
+            data.token;
+
+
+        sessionStorage.setItem(
+            "nm_admin_token",
+            token
+        );
+
+
+        document
+        .getElementById(
+            "loginScreen"
+        )
+        .classList
+        .add("hidden");
+
+
+        document
+        .getElementById("app")
+        .classList
+        .remove("hidden");
+
+
+        await loadUsers();
+
+
+    } catch (error) {
+
+        document
+        .getElementById(
+            "loginError"
+        )
+        .textContent =
+            error.message;
+
+    }
+}
+
+
+// ============================================================
+// LOAD USERS
+// ============================================================
+
+async function loadUsers() {
+
+    try {
+
+        const data =
+            await api(
+                "/api/admin/users"
+            );
+
+
+        users =
+            Array.isArray(
+                data.users
+            )
+                ? data.users
+                : [];
+
+
+        renderUsers();
+
+        updateStats();
+
+
+    } catch (error) {
+
+        if (
+            error.message
+                .toLowerCase()
+                .includes("unauthorized")
+        ) {
+
+            logout();
+
+            return;
+
+        }
+
+
+        showMessage(
+            error.message,
+            true
+        );
+
+    }
+}
+
+
+// ============================================================
+// SEARCH
+// ============================================================
+
+function searchUsers() {
+
+    renderUsers();
+
+}
+
+
+// ============================================================
+// RENDER
+// ============================================================
+
+function renderUsers() {
+
+    const search =
+        document
+        .getElementById("search")
+        .value
+        .trim()
+        .toLowerCase();
+
+
+    const filtered =
+        users.filter(
+            user => {
+
+                const text =
+                    [
+                        user.id,
+                        user.email,
+                        user.phone
+                    ]
+                    .join(" ")
+                    .toLowerCase();
+
+
+                return text.includes(
+                    search
+                );
+
             }
         );
 
-}
+
+    document
+    .getElementById("userCount")
+    .textContent =
+        filtered.length +
+        " customer(s)";
 
 
-async function refreshUser(){
+    const box =
+        document
+        .getElementById("users");
 
-    if(!u || !u.id){
+
+    if (!filtered.length) {
+
+        box.innerHTML = `
+
+<div class="card">
+
+No customers found.
+
+</div>
+
+`;
+
         return;
-    }
-
-    try{
-
-        const response =
-            await fetch(
-                API +
-                "/api/users/" +
-                encodeURIComponent(
-                    u.id
-                )
-            );
-
-        const data =
-            await response.json();
-
-        if(
-            response.ok &&
-            data.user
-        ){
-
-            u = {
-
-                id:
-                    data.user.id,
-
-                email:
-                    data.user.email || "",
-
-                phone:
-                    data.user.phone || "",
-
-                balance:
-                    Number(
-                        data.user.balance || 0
-                    ),
-
-                status:
-                    data.user.status ||
-                    "active",
-
-                records:
-                    data.user.transactions ||
-                    []
-
-            };
-
-
-            localStorage.setItem(
-                "nm_user",
-                JSON.stringify(u)
-            );
-
-        }
-
-    }catch(error){
-
-        console.error(
-            error
-        );
 
     }
+
+
+    box.innerHTML =
+        filtered
+        .map(
+            user => {
+
+                const status =
+                    user.status ||
+                    "active";
+
+
+                return `
+
+<div class="user-card">
+
+<div class="user-email">
+
+${esc(
+    user.email ||
+    "No email"
+)}
+
+</div>
+
+
+<div class="user-phone">
+
+${esc(
+    user.phone ||
+    "No phone"
+)}
+
+</div>
+
+
+<div class="user-id">
+
+${esc(
+    user.id
+)}
+
+</div>
+
+
+<div class="balance">
+
+${money(
+    user.balance
+)}
+
+</div>
+
+
+<span
+class="status ${
+    status === "suspended"
+        ? "suspended"
+        : ""
+}"
+>
+
+${esc(
+    status.toUpperCase()
+)}
+
+</span>
+
+
+<div class="actions">
+
+<button
+class="primary"
+onclick="openUser('${esc(user.id)}')"
+>
+Manage
+</button>
+
+</div>
+
+</div>
+
+`;
+
+            }
+        )
+        .join("");
 
 }
 
 
-function login(){
+// ============================================================
+// STATS
+// ============================================================
 
-    document.getElementById(
-        "root"
-    ).innerHTML = `
+function updateStats() {
 
-    <div style="
-        max-width:420px;
-        margin:80px auto;
-        padding:30px;
-    ">
-
-        <h1>
-            NOON MARKET
-        </h1>
-
-        <p>
-            Secure account access
-        </p>
-
-        <input
-            id="loginEmail"
-            placeholder="Email or phone"
-            style="
-                width:100%;
-                padding:14px;
-                margin:8px 0;
-            "
-        >
-
-        <input
-            id="loginPassword"
-            type="password"
-            placeholder="Password"
-            style="
-                width:100%;
-                padding:14px;
-                margin:8px 0;
-            "
-        >
-
-        <button
-            onclick="doLogin()"
-            style="
-                width:100%;
-                padding:14px;
-                margin-top:10px;
-                cursor:pointer;
-            "
-        >
-            Sign In
-        </button>
-
-        <button
-            onclick="signup()"
-            style="
-                width:100%;
-                padding:14px;
-                margin-top:10px;
-                cursor:pointer;
-            "
-        >
-            Create Account
-        </button>
-
-        <div
-            id="loginError"
-            style="
-                color:#ff5555;
-                margin-top:15px;
-            "
-        ></div>
-
-    </div>
-
-    `;
-
-}
+    const total =
+        users.length;
 
 
-async function doLogin(){
-
-    const value =
-        document.getElementById(
-            "loginEmail"
-        ).value.trim();
-
-    const password =
-        document.getElementById(
-            "loginPassword"
-        ).value;
+    const active =
+        users.filter(
+            user =>
+                (
+                    user.status ||
+                    "active"
+                ) === "active"
+        ).length;
 
 
-    try{
-
-        const response =
-            await fetch(
-                API +
-                "/api/login",
-                {
-                    method:"POST",
-
-                    headers:{
-                        "Content-Type":
-                            "application/json"
-                    },
-
-                    body:
-                        JSON.stringify({
-
-                            email:value,
-
-                            password:password
-
-                        })
-                }
-            );
-
-
-        const data =
-            await response.json();
-
-
-        if(
-            !response.ok
-        ){
-
-            document.getElementById(
-                "loginError"
-            ).textContent =
-                data.error ||
-                "Login failed";
-
-            return;
-        }
-
-
-        u = {
-
-            id:
-                data.user.id,
-
-            email:
-                data.user.email || "",
-
-            phone:
-                data.user.phone || "",
-
-            balance:
+    const balance =
+        users.reduce(
+            (
+                sum,
+                user
+            ) =>
+                sum +
                 Number(
-                    data.user.balance || 0
+                    user.balance || 0
                 ),
-
-            status:
-                data.user.status ||
-                "active",
-
-            records:
-                data.user.transactions ||
-                []
-
-        };
-
-
-        localStorage.setItem(
-            "nm_user",
-            JSON.stringify(u)
+            0
         );
 
 
-        home();
+    document
+    .getElementById(
+        "totalUsers"
+    )
+    .textContent =
+        total;
 
-    }catch(error){
 
-        document.getElementById(
-            "loginError"
-        ).textContent =
-            "Backend connection failed.";
+    document
+    .getElementById(
+        "activeUsers"
+    )
+    .textContent =
+        active;
+
+
+    document
+    .getElementById(
+        "totalBalance"
+    )
+    .textContent =
+        money(balance);
+}
+
+
+// ============================================================
+// OPEN USER
+// ============================================================
+
+async function openUser(id) {
+
+    try {
+
+        const data =
+            await api(
+                "/api/admin/users/" +
+                encodeURIComponent(id)
+            );
+
+
+        selectedUser =
+            data.user;
+
+
+        document
+        .getElementById(
+            "modal"
+        )
+        .classList
+        .remove("hidden");
+
+
+        document
+        .getElementById(
+            "modalUser"
+        )
+        .innerHTML = `
+
+<div class="small">
+Customer
+</div>
+
+<div
+style="
+font-size:18px;
+font-weight:700;
+margin:5px 0 15px;
+"
+>
+${esc(
+    selectedUser.email ||
+    selectedUser.phone ||
+    selectedUser.id
+)}
+</div>
+
+<div class="small">
+User ID
+</div>
+
+<div
+style="
+word-break:break-all;
+margin:5px 0 15px;
+"
+>
+${esc(
+    selectedUser.id
+)}
+</div>
+
+<div class="small">
+Current Balance
+</div>
+
+<div
+style="
+font-size:28px;
+font-weight:800;
+margin-top:5px;
+"
+>
+${money(
+    selectedUser.balance
+)}
+</div>
+
+`;
+
+
+        document
+        .getElementById(
+            "modalMessage"
+        )
+        .innerHTML = "";
+
+
+        renderTransactions();
+
+
+    } catch (error) {
+
+        showMessage(
+            error.message,
+            true
+        );
+
+    }
+}
+
+
+// ============================================================
+// CLOSE MODAL
+// ============================================================
+
+function closeModal() {
+
+    selectedUser =
+        null;
+
+
+    document
+    .getElementById(
+        "modal"
+    )
+    .classList
+    .add("hidden");
+
+}
+
+
+// ============================================================
+// CHANGE BALANCE
+// ============================================================
+
+async function changeBalance() {
+
+    if (!selectedUser) {
+        return;
+    }
+
+
+    const type =
+        document
+        .getElementById(
+            "balanceType"
+        )
+        .value;
+
+
+    const amount =
+        Number(
+            document
+            .getElementById(
+                "amount"
+            )
+            .value
+        );
+
+
+    const reason =
+        document
+        .getElementById(
+            "reason"
+        )
+        .value
+        .trim();
+
+
+    if (
+        !Number.isFinite(amount) ||
+        amount <= 0
+    ) {
+
+        showModalMessage(
+            "Enter a valid amount.",
+            true
+        );
+
+        return;
+    }
+
+
+    if (!reason) {
+
+        showModalMessage(
+            "Enter a reason.",
+            true
+        );
+
+        return;
+    }
+
+
+    const action =
+        type === "credit"
+            ? "increase"
+            : "decrease";
+
+
+    if (
+        !confirm(
+            "Confirm " +
+            action +
+            " of " +
+            money(amount) +
+            " for this account?"
+        )
+    ) {
+
+        return;
 
     }
 
-}
 
+    try {
 
-function signup(){
-
-    document.getElementById(
-        "root"
-    ).innerHTML = `
-
-    <div style="
-        max-width:420px;
-        margin:80px auto;
-        padding:30px;
-    ">
-
-        <h1>
-            NOON MARKET
-        </h1>
-
-        <h2>
-            Create Account
-        </h2>
-
-        <input
-            id="signupEmail"
-            placeholder="Email"
-            style="
-                width:100%;
-                padding:14px;
-                margin:8px 0;
-            "
-        >
-
-        <input
-            id="signupPhone"
-            placeholder="Phone"
-            style="
-                width:100%;
-                padding:14px;
-                margin:8px 0;
-            "
-        >
-
-        <input
-            id="signupPassword"
-            type="password"
-            placeholder="Password"
-            style="
-                width:100%;
-                padding:14px;
-                margin:8px 0;
-            "
-        >
-
-        <button
-            onclick="doSignup()"
-            style="
-                width:100%;
-                padding:14px;
-                margin-top:10px;
-            "
-        >
-            Create Account
-        </button>
-
-        <button
-            onclick="login()"
-            style="
-                width:100%;
-                padding:14px;
-                margin-top:10px;
-            "
-        >
-            Back to Login
-        </button>
-
-        <div
-            id="signupError"
-            style="
-                color:#ff5555;
-                margin-top:15px;
-            "
-        ></div>
-
-    </div>
-
-    `;
-
-}
-
-
-async function doSignup(){
-
-    const email =
-        document.getElementById(
-            "signupEmail"
-        ).value.trim();
-
-    const phone =
-        document.getElementById(
-            "signupPhone"
-        ).value.trim();
-
-    const password =
-        document.getElementById(
-            "signupPassword"
-        ).value;
-
-
-    try{
-
-        const response =
-            await fetch(
-                API +
-                "/api/users",
+        const data =
+            await api(
+                "/api/admin/users/" +
+                encodeURIComponent(
+                    selectedUser.id
+                ) +
+                "/balance",
                 {
-                    method:"POST",
+                    method:
+                        "POST",
 
-                    headers:{
+                    headers: {
                         "Content-Type":
                             "application/json"
                     },
 
                     body:
                         JSON.stringify({
-
-                            email,
-                            phone,
-                            password
-
+                            amount,
+                            type,
+                            reason
                         })
                 }
             );
 
 
-        const data =
-            await response.json();
+        selectedUser =
+            data.user;
 
 
-        if(
-            !response.ok
-        ){
-
-            document.getElementById(
-                "signupError"
-            ).textContent =
-                data.error ||
-                "Account creation failed";
-
-            return;
-        }
-
-
-        alert(
-            "Account created successfully. Balance: $0.00"
+        showModalMessage(
+            "Balance updated successfully.",
+            false
         );
 
 
-        login();
+        document
+        .getElementById(
+            "amount"
+        )
+        .value = "";
 
-    }catch(error){
 
-        document.getElementById(
-            "signupError"
-        ).textContent =
-            "Backend connection failed.";
+        document
+        .getElementById(
+            "reason"
+        )
+        .value = "";
+
+
+        await loadUsers();
+
+
+        renderTransactions();
+
+
+        document
+        .getElementById(
+            "modalUser"
+        )
+        .innerHTML = `
+
+<div class="small">
+Customer
+</div>
+
+<div
+style="
+font-size:18px;
+font-weight:700;
+margin:5px 0 15px;
+"
+>
+${esc(
+    selectedUser.email ||
+    selectedUser.phone ||
+    selectedUser.id
+)}
+</div>
+
+<div class="small">
+User ID
+</div>
+
+<div
+style="
+word-break:break-all;
+margin:5px 0 15px;
+"
+>
+${esc(
+    selectedUser.id
+)}
+</div>
+
+<div class="small">
+Current Balance
+</div>
+
+<div
+style="
+font-size:28px;
+font-weight:800;
+margin-top:5px;
+"
+>
+${money(
+    selectedUser.balance
+)}
+</div>
+
+`;
+
+
+    } catch (error) {
+
+        showModalMessage(
+            error.message,
+            true
+        );
 
     }
-
 }
 
 
-async function home(){
+// ============================================================
+// STATUS
+// ============================================================
 
-    await refreshUser();
+async function changeStatus(status) {
 
-    if(!u){
-
-        login();
-
+    if (!selectedUser) {
         return;
     }
 
 
-    document.getElementById(
-        "root"
-    ).innerHTML = `
+    if (
+        !confirm(
+            "Change account status to " +
+            status +
+            "?"
+        )
+    ) {
 
-    <div style="
-        max-width:900px;
-        margin:auto;
-        padding:25px;
-    ">
-
-        <div style="
-            display:flex;
-            justify-content:space-between;
-            align-items:center;
-        ">
-
-            <h1>
-                NOON MARKET
-            </h1>
-
-            <button
-                onclick="logout()"
-            >
-                Sign Out
-            </button>
-
-        </div>
-
-
-        <div style="
-            background:#111;
-            border-radius:18px;
-            padding:30px;
-            margin-top:25px;
-        ">
-
-            <div>
-                Available Balance
-            </div>
-
-            <div style="
-                font-size:42px;
-                font-weight:bold;
-                margin-top:10px;
-            ">
-
-                ${
-                    money(
-                        u.balance
-                    )
-                }
-
-            </div>
-
-            <div style="
-                margin-top:10px;
-                color:#aaa;
-            ">
-
-                ${
-                    u.email ||
-                    u.phone
-                }
-
-            </div>
-
-        </div>
-
-
-        <div style="
-            margin-top:30px;
-        ">
-
-            <h2>
-                Crypto Market
-            </h2>
-
-            <div
-                id="market"
-            >
-                Loading market...
-            </div>
-
-        </div>
-
-
-        <div style="
-            margin-top:30px;
-        ">
-
-            <h3>
-                Account Status
-            </h3>
-
-            <p>
-                ${
-                    u.status
-                }
-            </p>
-
-        </div>
-
-    </div>
-
-    `;
-
-
-    loadMarket();
-
-}
-
-
-async function loadMarket(){
-
-    try{
-
-        const response =
-            await fetch(
-                API +
-                "/api/market"
-            );
-
-        const data =
-            await response.json();
-
-
-        document.getElementById(
-            "market"
-        ).innerHTML = `
-
-        <div style="
-            display:grid;
-            grid-template-columns:
-                repeat(auto-fit,minmax(180px,1fr));
-            gap:15px;
-        ">
-
-            ${coin(
-                "Bitcoin",
-                data.btc
-            )}
-
-            ${coin(
-                "Ethereum",
-                data.eth
-            )}
-
-            ${coin(
-                "Tether",
-                data.usdt
-            )}
-
-            ${coin(
-                "BNB",
-                data.bnb
-            )}
-
-        </div>
-
-        `;
-
-    }catch(error){
-
-        document.getElementById(
-            "market"
-        ).textContent =
-            "Market data unavailable";
+        return;
 
     }
 
+
+    try {
+
+        const data =
+            await api(
+                "/api/admin/users/" +
+                encodeURIComponent(
+                    selectedUser.id
+                ) +
+                "/status",
+                {
+                    method:
+                        "PATCH",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:
+                        JSON.stringify({
+                            status
+                        })
+                }
+            );
+
+
+        selectedUser =
+            data.user;
+
+
+        showModalMessage(
+            "Account status updated.",
+            false
+        );
+
+
+        await loadUsers();
+
+
+    } catch (error) {
+
+        showModalMessage(
+            error.message,
+            true
+        );
+
+    }
 }
 
 
-function coin(
-    name,
-    data
-){
+// ============================================================
+// TRANSACTIONS
+// ============================================================
 
-    return `
+function renderTransactions() {
 
-    <div style="
-        background:#111;
-        padding:20px;
-        border-radius:15px;
-    ">
+    const box =
+        document
+        .getElementById(
+            "transactions"
+        );
 
-        <b>
-            ${name}
-        </b>
 
-        <div style="
-            font-size:22px;
-            margin-top:10px;
-        ">
+    if (!selectedUser) {
 
-            ${money(data.price)}
+        box.innerHTML = "";
 
-        </div>
+        return;
 
-        <div style="
-            margin-top:8px;
-        ">
+    }
 
-            ${
-                Number(
-                    data.change || 0
-                ).toFixed(2)
-            }%
 
-        </div>
+    const records =
+        Array.isArray(
+            selectedUser.transactions
+        )
+            ? selectedUser.transactions
+            : [];
 
-    </div>
 
-    `;
+    if (!records.length) {
 
+        box.innerHTML = `
+
+<div class="small">
+No transactions.
+</div>
+
+`;
+
+        return;
+
+    }
+
+
+    box.innerHTML = `
+
+<div
+style="
+overflow-x:auto;
+max-height:300px;
+overflow-y:auto;
+"
+>
+
+<table>
+
+<thead>
+
+<tr>
+
+<th>
+Type
+</th>
+
+<th>
+Amount
+</th>
+
+<th>
+Reason
+</th>
+
+<th>
+Time
+</th>
+
+</tr>
+
+</thead>
+
+<tbody>
+
+${
+    records
+    .slice()
+    .reverse()
+    .map(
+        record => `
+
+<tr>
+
+<td>
+${esc(
+    record.type ||
+    ""
+)}
+</td>
+
+<td>
+${money(
+    record.amount
+)}
+</td>
+
+<td>
+${esc(
+    record.reason ||
+    ""
+)}
+</td>
+
+<td>
+${esc(
+    record.time
+        ? new Date(
+            record.time
+        ).toLocaleString()
+        : ""
+)}
+</td>
+
+</tr>
+
+`
+    )
+    .join("")
 }
 
+</tbody>
 
-function logout(){
+</table>
 
-    localStorage.removeItem(
-        "nm_user"
-    );
+</div>
 
-    u = null;
-
-    login();
-
-}
-
-
-if(
-    u &&
-    u.id
-){
-
-    home();
-
-}else{
-
-    login();
-
-}
-
-</script>
-
-</body>
-
-</html>
 `;
 
 }
 
 
-/* ============================================================
-   SERVER
-============================================================ */
+// ============================================================
+// MESSAGES
+// ============================================================
+
+function showMessage(
+    message,
+    error
+) {
+
+    const box =
+        document
+        .getElementById(
+            "message"
+        );
+
+
+    box.className =
+        error
+            ? "error"
+            : "success";
+
+
+    box.textContent =
+        message;
+
+}
+
+
+function showModalMessage(
+    message,
+    error
+) {
+
+    const box =
+        document
+        .getElementById(
+            "modalMessage"
+        );
+
+
+    box.className =
+        error
+            ? "error"
+            : "success";
+
+
+    box.textContent =
+        message;
+
+}
+
+
+// ============================================================
+// LOGOUT
+// ============================================================
+
+function logout() {
+
+    token = "";
+
+    sessionStorage.removeItem(
+        "nm_admin_token"
+    );
+
+    location.reload();
+
+}
+
+
+// ============================================================
+// AUTO LOGIN CHECK
+// ============================================================
+
+async function checkSession() {
+
+    if (!token) {
+        return;
+    }
+
+
+    try {
+
+        await loadUsers();
+
+
+        document
+        .getElementById(
+            "loginScreen"
+        )
+        .classList
+        .add("hidden");
+
+
+        document
+        .getElementById(
+            "app"
+        )
+        .classList
+        .remove("hidden");
+
+
+    } catch {
+
+        logout();
+
+    }
+
+}
+
+
+// ============================================================
+// AUTO REFRESH
+// ============================================================
+
+setInterval(
+    () => {
+
+        if (
+            token &&
+            !document
+            .getElementById(
+                "app"
+            )
+            .classList
+            .contains("hidden")
+        ) {
+
+            loadUsers();
+
+        }
+
+    },
+    15000
+);
+
+
+// ============================================================
+// START
+// ============================================================
+
+checkSession();
+
+</script>
+
+</body>
+
+</html>`;
+}
+
+
+// ============================================================
+// LOCAL ADMIN SERVER
+// ============================================================
 
 const server =
     http.createServer(
-        async (
-            req,
-            res
-        ) => {
+        async (req, res) => {
 
             const url =
                 new URL(
@@ -1107,18 +2274,19 @@ const server =
                     PORT
                 );
 
+
             const p =
                 url.pathname;
 
 
-            /* ==================================================
-               CORS
-            ================================================== */
+            // ====================================================
+            // OPTIONS
+            // ====================================================
 
-            if(
+            if (
                 req.method ===
                 "OPTIONS"
-            ){
+            ) {
 
                 res.writeHead(
                     204,
@@ -1135,1069 +2303,45 @@ const server =
                 );
 
                 return res.end();
+
             }
 
 
-            /* ==================================================
-               ADMIN LOGIN
-            ================================================== */
+            // ====================================================
+            // ADMIN LOGIN
+            // ====================================================
 
-            if(
+            if (
                 req.method === "POST" &&
                 p === "/api/admin/login"
-            ){
+            ) {
 
-                try{
+                try {
 
                     const data =
-                        await body(req);
+                        await readBody(req);
 
 
-                    if(
-                        data.username !==
-                            ADMIN_USER ||
-                        data.password !==
-                            ADMIN_PASSWORD
-                    ){
-
-                        return sendJSON(
-                            res,
-                            401,
-                            {
-                                error:
-                                    "Invalid admin username or password"
-                            }
+                    const result =
+                        await liveRequest(
+                            "POST",
+                            "/api/admin/login",
+                            "",
+                            data
                         );
-
-                    }
-
-
-                    const token =
-                        crypto
-                            .randomBytes(32)
-                            .toString("hex");
-
-
-                    adminSessions.set(
-                        token,
-                        {
-                            created:
-                                Date.now()
-                        }
-                    );
 
 
                     return sendJSON(
                         res,
-                        200,
-                        {
-                            success:true,
-                            token
-                        }
-                    );
-
-                }catch(error){
-
-                    return sendJSON(
-                        res,
-                        400,
-                        {
-                            error:
-                                error.message
-                        }
-                    );
-
-                }
-
-            }
-
-
-            /* ==================================================
-               ADMIN USERS
-            ================================================== */
-
-            if(
-                req.method === "GET" &&
-                p === "/api/admin/users"
-            ){
-
-                if(
-                    !adminAuth(req)
-                ){
-
-                    return sendJSON(
-                        res,
-                        401,
-                        {
-                            error:
-                                "Unauthorized"
-                        }
-                    );
-
-                }
-
-
-                const users =
-                    readUsers();
-
-
-                return sendJSON(
-                    res,
-                    200,
-                    {
-                        success:true,
-
-                        users:
-                            users.map(
-                                user => ({
-                                    id:
-                                        user.id,
-
-                                    email:
-                                        user.email ||
-                                        "",
-
-                                    phone:
-                                        user.phone ||
-                                        "",
-
-                                    balance:
-                                        Number(
-                                            user.balance ||
-                                            0
-                                        ),
-
-                                    status:
-                                        user.status ||
-                                        "active",
-
-                                    transactions:
-                                        Array.isArray(
-                                            user.transactions
-                                        )
-                                            ? user.transactions
-                                            : [],
-
-                                    createdAt:
-                                        user.createdAt ||
-                                        ""
-                                })
-                            )
-                    }
-                );
-
-            }
-
-
-            /* ==================================================
-               ADMIN GET USER
-            ================================================== */
-
-            const adminUserMatch =
-                p.match(
-                    /^\/api\/admin\/users\/([^/]+)$/
-                );
-
-
-            if(
-                req.method === "GET" &&
-                adminUserMatch
-            ){
-
-                if(
-                    !adminAuth(req)
-                ){
-
-                    return sendJSON(
-                        res,
-                        401,
-                        {
-                            error:
-                                "Unauthorized"
-                        }
-                    );
-
-                }
-
-
-                const id =
-                    decodeURIComponent(
-                        adminUserMatch[1]
+                        result.status,
+                        result.data
                     );
 
 
-                const users =
-                    readUsers();
-
-
-                const user =
-                    users.find(
-                        x =>
-                            x.id === id
-                    );
-
-
-                if(!user){
-
-                    return sendJSON(
-                        res,
-                        404,
-                        {
-                            error:
-                                "User not found"
-                        }
-                    );
-
-                }
-
-
-                return sendJSON(
-                    res,
-                    200,
-                    {
-                        success:true,
-
-                        user
-                    }
-                );
-
-            }
-
-
-            /* ==================================================
-               ADMIN CHANGE BALANCE
-            ================================================== */
-
-            const balanceMatch =
-                p.match(
-                    /^\/api\/admin\/users\/([^/]+)\/balance$/
-                );
-
-
-            if(
-                req.method === "POST" &&
-                balanceMatch
-            ){
-
-                if(
-                    !adminAuth(req)
-                ){
-
-                    return sendJSON(
-                        res,
-                        401,
-                        {
-                            error:
-                                "Unauthorized"
-                        }
-                    );
-
-                }
-
-
-                try{
-
-                    const id =
-                        decodeURIComponent(
-                            balanceMatch[1]
-                        );
-
-
-                    const data =
-                        await body(req);
-
-
-                    const amount =
-                        Number(
-                            data.amount
-                        );
-
-
-                    if(
-                        !Number.isFinite(
-                            amount
-                        ) ||
-                        amount <= 0
-                    ){
-
-                        return sendJSON(
-                            res,
-                            400,
-                            {
-                                error:
-                                    "Invalid amount"
-                            }
-                        );
-
-                    }
-
-
-                    const type =
-                        data.type === "debit"
-                            ? "debit"
-                            : "credit";
-
-
-                    const users =
-                        readUsers();
-
-
-                    const user =
-                        users.find(
-                            x =>
-                                x.id === id
-                        );
-
-
-                    if(!user){
-
-                        return sendJSON(
-                            res,
-                            404,
-                            {
-                                error:
-                                    "User not found"
-                            }
-                        );
-
-                    }
-
-
-                    user.balance =
-                        Number(
-                            user.balance || 0
-                        );
-
-
-                    if(
-                        type === "credit"
-                    ){
-
-                        user.balance +=
-                            amount;
-
-                    }else{
-
-                        user.balance -=
-                            amount;
-
-
-                        if(
-                            user.balance < 0
-                        ){
-
-                            user.balance = 0;
-
-                        }
-
-                    }
-
-
-                    if(
-                        !Array.isArray(
-                            user.transactions
-                        )
-                    ){
-
-                        user.transactions = [];
-
-                    }
-
-
-                    user.transactions.push({
-
-                        type,
-
-                        amount,
-
-                        reason:
-                            String(
-                                data.reason ||
-                                ""
-                            ),
-
-                        time:
-                            new Date()
-                                .toISOString()
-
-                    });
-
-
-                    writeUsers(
-                        users
-                    );
-
-
-                    return sendJSON(
-                        res,
-                        200,
-                        {
-                            success:true,
-                            user
-                        }
-                    );
-
-                }catch(error){
-
-                    return sendJSON(
-                        res,
-                        400,
-                        {
-                            error:
-                                error.message
-                        }
-                    );
-
-                }
-
-            }
-
-
-            /* ==================================================
-               ADMIN CHANGE STATUS
-            ================================================== */
-
-            const statusMatch =
-                p.match(
-                    /^\/api\/admin\/users\/([^/]+)\/status$/
-                );
-
-
-            if(
-                req.method === "PATCH" &&
-                statusMatch
-            ){
-
-                if(
-                    !adminAuth(req)
-                ){
-
-                    return sendJSON(
-                        res,
-                        401,
-                        {
-                            error:
-                                "Unauthorized"
-                        }
-                    );
-
-                }
-
-
-                try{
-
-                    const id =
-                        decodeURIComponent(
-                            statusMatch[1]
-                        );
-
-
-                    const data =
-                        await body(req);
-
-
-                    if(
-                        data.status !==
-                            "active" &&
-                        data.status !==
-                            "suspended"
-                    ){
-
-                        return sendJSON(
-                            res,
-                            400,
-                            {
-                                error:
-                                    "Invalid status"
-                            }
-                        );
-
-                    }
-
-
-                    const users =
-                        readUsers();
-
-
-                    const user =
-                        users.find(
-                            x =>
-                                x.id === id
-                        );
-
-
-                    if(!user){
-
-                        return sendJSON(
-                            res,
-                            404,
-                            {
-                                error:
-                                    "User not found"
-                            }
-                        );
-
-                    }
-
-
-                    user.status =
-                        data.status;
-
-
-                    writeUsers(
-                        users
-                    );
-
-
-                    return sendJSON(
-                        res,
-                        200,
-                        {
-                            success:true,
-                            user
-                        }
-                    );
-
-                }catch(error){
-
-                    return sendJSON(
-                        res,
-                        400,
-                        {
-                            error:
-                                error.message
-                        }
-                    );
-
-                }
-
-            }
-
-
-            /* ==================================================
-               CUSTOMER LOGIN
-            ================================================== */
-
-            if(
-                req.method === "POST" &&
-                p === "/api/login"
-            ){
-
-                try{
-
-                    const data =
-                        await body(req);
-
-
-                    const email =
-                        String(
-                            data.email || ""
-                        )
-                            .trim()
-                            .toLowerCase();
-
-
-                    const phone =
-                        String(
-                            data.phone || ""
-                        )
-                            .trim();
-
-
-                    const password =
-                        String(
-                            data.password || ""
-                        );
-
-
-                    if(
-                        !email &&
-                        !phone
-                    ){
-
-                        return sendJSON(
-                            res,
-                            400,
-                            {
-                                error:
-                                    "Enter an email or phone number."
-                            }
-                        );
-
-                    }
-
-
-                    if(!password){
-
-                        return sendJSON(
-                            res,
-                            400,
-                            {
-                                error:
-                                    "Enter your password."
-                            }
-                        );
-
-                    }
-
-
-                    const users =
-                        readUsers();
-
-
-                    const user =
-                        users.find(
-                            x => {
-
-                                const emailMatch =
-                                    email &&
-                                    String(
-                                        x.email || ""
-                                    )
-                                        .toLowerCase() ===
-                                    email;
-
-
-                                const phoneMatch =
-                                    phone &&
-                                    String(
-                                        x.phone || ""
-                                    )
-                                        .trim() ===
-                                    phone;
-
-
-                                return (
-                                    emailMatch ||
-                                    phoneMatch
-                                );
-
-                            }
-                        );
-
-
-                    if(!user){
-
-                        return sendJSON(
-                            res,
-                            401,
-                            {
-                                error:
-                                    "Account not found."
-                            }
-                        );
-
-                    }
-
-
-                    if(
-                        String(
-                            user.password ||
-                            ""
-                        ) !== password
-                    ){
-
-                        return sendJSON(
-                            res,
-                            401,
-                            {
-                                error:
-                                    "Incorrect password."
-                            }
-                        );
-
-                    }
-
-
-                    if(
-                        user.status &&
-                        user.status !==
-                            "active"
-                    ){
-
-                        return sendJSON(
-                            res,
-                            403,
-                            {
-                                error:
-                                    "This account is suspended."
-                            }
-                        );
-
-                    }
-
-
-                    return sendJSON(
-                        res,
-                        200,
-                        {
-
-                            success:true,
-
-                            user:{
-
-                                id:
-                                    user.id,
-
-                                email:
-                                    user.email ||
-                                    "",
-
-                                phone:
-                                    user.phone ||
-                                    "",
-
-                                balance:
-                                    Number(
-                                        user.balance ||
-                                        0
-                                    ),
-
-                                status:
-                                    user.status ||
-                                    "active",
-
-                                transactions:
-                                    user.transactions ||
-                                    user.records ||
-                                    []
-
-                            }
-
-                        }
-                    );
-
-                }catch(error){
-
-                    return sendJSON(
-                        res,
-                        400,
-                        {
-                            error:
-                                error.message
-                        }
-                    );
-
-                }
-
-            }
-
-
-            /* ==================================================
-               CREATE ACCOUNT
-            ================================================== */
-
-            if(
-                req.method === "POST" &&
-                p === "/api/users"
-            ){
-
-                try{
-
-                    const data =
-                        await body(req);
-
-
-                    const email =
-                        String(
-                            data.email || ""
-                        )
-                            .trim()
-                            .toLowerCase();
-
-
-                    const phone =
-                        String(
-                            data.phone || ""
-                        )
-                            .trim();
-
-
-                    const password =
-                        String(
-                            data.password || ""
-                        );
-
-
-                    if(
-                        !email &&
-                        !phone
-                    ){
-
-                        return sendJSON(
-                            res,
-                            400,
-                            {
-                                error:
-                                    "Email or phone is required"
-                            }
-                        );
-
-                    }
-
-
-                    if(!password){
-
-                        return sendJSON(
-                            res,
-                            400,
-                            {
-                                error:
-                                    "Password is required"
-                            }
-                        );
-
-                    }
-
-
-                    const users =
-                        readUsers();
-
-
-                    const exists =
-                        users.find(
-                            user =>
-
-                                (
-                                    email &&
-                                    String(
-                                        user.email ||
-                                        ""
-                                    )
-                                        .toLowerCase() ===
-                                    email
-                                ) ||
-
-                                (
-                                    phone &&
-                                    String(
-                                        user.phone ||
-                                        ""
-                                    )
-                                        .trim() ===
-                                    phone
-                                )
-                        );
-
-
-                    if(exists){
-
-                        return sendJSON(
-                            res,
-                            409,
-                            {
-                                error:
-                                    "Account already exists. Please use Login."
-                            }
-                        );
-
-                    }
-
-
-                    const user = {
-
-                        id:
-                            "user_" +
-                            Date.now() +
-                            "_" +
-                            Math.random()
-                                .toString(36)
-                                .slice(2,8),
-
-                        email,
-
-                        phone,
-
-                        password,
-
-                        balance:0,
-
-                        status:"active",
-
-                        transactions:[],
-
-                        createdAt:
-                            new Date()
-                                .toISOString()
-
-                    };
-
-
-                    users.push(
-                        user
-                    );
-
-
-                    writeUsers(
-                        users
-                    );
-
-
-                    return sendJSON(
-                        res,
-                        201,
-                        {
-
-                            success:true,
-
-                            user:{
-
-                                id:
-                                    user.id,
-
-                                email:
-                                    user.email,
-
-                                phone:
-                                    user.phone,
-
-                                balance:
-                                    user.balance,
-
-                                status:
-                                    user.status,
-
-                                transactions:
-                                    user.transactions,
-
-                                createdAt:
-                                    user.createdAt
-
-                            }
-
-                        }
-                    );
-
-                }catch(error){
-
-                    return sendJSON(
-                        res,
-                        400,
-                        {
-                            error:
-                                error.message
-                        }
-                    );
-
-                }
-
-            }
-
-
-            /* ==================================================
-               GET CUSTOMER USER
-            ================================================== */
-
-            const userMatch =
-                p.match(
-                    /^\/api\/users\/([^/]+)$/
-                );
-
-
-            if(
-                req.method === "GET" &&
-                userMatch
-            ){
-
-                const id =
-                    decodeURIComponent(
-                        userMatch[1]
-                    );
-
-
-                const users =
-                    readUsers();
-
-
-                const user =
-                    users.find(
-                        x =>
-                            x.id === id
-                    );
-
-
-                if(!user){
-
-                    return sendJSON(
-                        res,
-                        404,
-                        {
-                            error:
-                                "User not found"
-                        }
-                    );
-
-                }
-
-
-                return sendJSON(
-                    res,
-                    200,
-                    {
-
-                        success:true,
-
-                        user:{
-
-                            id:
-                                user.id,
-
-                            email:
-                                user.email ||
-                                "",
-
-                            phone:
-                                user.phone ||
-                                "",
-
-                            balance:
-                                Number(
-                                    user.balance ||
-                                    0
-                                ),
-
-                            status:
-                                user.status ||
-                                "active",
-
-                            transactions:
-                                user.transactions ||
-                                user.records ||
-                                []
-
-                        }
-
-                    }
-                );
-
-            }
-
-
-            /* ==================================================
-               MARKET
-            ================================================== */
-
-            if(
-                req.method === "GET" &&
-                p === "/api/market"
-            ){
-
-                try{
-
-                    const data =
-                        await market();
-
-
-                    return sendJSON(
-                        res,
-                        200,
-                        data
-                    );
-
-                }catch(error){
+                } catch (error) {
 
                     console.error(
-                        "Market:",
+                        "Admin login:",
                         error
                     );
 
@@ -2207,7 +2351,7 @@ const server =
                         502,
                         {
                             error:
-                                "Market data unavailable"
+                                "Could not connect to live Render server."
                         }
                     );
 
@@ -2216,37 +2360,375 @@ const server =
             }
 
 
-            /* ==================================================
-               HOME
-            ================================================== */
+            // ====================================================
+            // ADMIN USERS
+            // ====================================================
 
-            if(
+            if (
                 req.method === "GET" &&
-                p === "/"
-            ){
+                p === "/api/admin/users"
+            ) {
 
-                res.writeHead(
-                    200,
-                    {
-                        "Content-Type":
-                            "text/html; charset=utf-8",
+                const token =
+                    String(
+                        req.headers.authorization ||
+                        ""
+                    )
+                    .replace(
+                        /^Bearer\s+/i,
+                        ""
+                    );
 
-                        "Cache-Control":
-                            "no-store"
-                    }
+
+                if (!token) {
+
+                    return sendJSON(
+                        res,
+                        401,
+                        {
+                            error:
+                                "Unauthorized"
+                        }
+                    );
+
+                }
+
+
+                try {
+
+                    const search =
+                        url.searchParams.get(
+                            "q"
+                        );
+
+
+                    const route =
+                        search
+                            ? "/api/admin/users?q=" +
+                              encodeURIComponent(
+                                  search
+                              )
+                            : "/api/admin/users";
+
+
+                    const result =
+                        await liveRequest(
+                            "GET",
+                            route,
+                            token
+                        );
+
+
+                    return sendJSON(
+                        res,
+                        result.status,
+                        result.data
+                    );
+
+
+                } catch (error) {
+
+                    console.error(
+                        "Users:",
+                        error
+                    );
+
+
+                    return sendJSON(
+                        res,
+                        502,
+                        {
+                            error:
+                                "Could not connect to live Render server."
+                        }
+                    );
+
+                }
+
+            }
+
+
+            // ====================================================
+            // ADMIN SINGLE USER
+            // ====================================================
+
+            const userMatch =
+                p.match(
+                    /^\/api\/admin\/users\/([^/]+)$/
                 );
 
 
-                return res.end(
-                    page()
+            if (
+                req.method === "GET" &&
+                userMatch
+            ) {
+
+                const token =
+                    String(
+                        req.headers.authorization ||
+                        ""
+                    )
+                    .replace(
+                        /^Bearer\s+/i,
+                        ""
+                    );
+
+
+                if (!token) {
+
+                    return sendJSON(
+                        res,
+                        401,
+                        {
+                            error:
+                                "Unauthorized"
+                        }
+                    );
+
+                }
+
+
+                try {
+
+                    const id =
+                        decodeURIComponent(
+                            userMatch[1]
+                        );
+
+
+                    const result =
+                        await liveRequest(
+                            "GET",
+                            "/api/admin/users/" +
+                            encodeURIComponent(id),
+                            token
+                        );
+
+
+                    return sendJSON(
+                        res,
+                        result.status,
+                        result.data
+                    );
+
+
+                } catch (error) {
+
+                    return sendJSON(
+                        res,
+                        502,
+                        {
+                            error:
+                                "Could not connect to live server."
+                        }
+                    );
+
+                }
+
+            }
+
+
+            // ====================================================
+            // ADMIN BALANCE
+            // ====================================================
+
+            const balanceMatch =
+                p.match(
+                    /^\/api\/admin\/users\/([^/]+)\/balance$/
+                );
+
+
+            if (
+                req.method === "POST" &&
+                balanceMatch
+            ) {
+
+                const token =
+                    String(
+                        req.headers.authorization ||
+                        ""
+                    )
+                    .replace(
+                        /^Bearer\s+/i,
+                        ""
+                    );
+
+
+                if (!token) {
+
+                    return sendJSON(
+                        res,
+                        401,
+                        {
+                            error:
+                                "Unauthorized"
+                        }
+                    );
+
+                }
+
+
+                try {
+
+                    const id =
+                        decodeURIComponent(
+                            balanceMatch[1]
+                        );
+
+
+                    const data =
+                        await readBody(req);
+
+
+                    const result =
+                        await liveRequest(
+                            "POST",
+                            "/api/admin/users/" +
+                            encodeURIComponent(id) +
+                            "/balance",
+                            token,
+                            data
+                        );
+
+
+                    return sendJSON(
+                        res,
+                        result.status,
+                        result.data
+                    );
+
+
+                } catch (error) {
+
+                    console.error(
+                        "Balance:",
+                        error
+                    );
+
+
+                    return sendJSON(
+                        res,
+                        502,
+                        {
+                            error:
+                                error.message
+                        }
+                    );
+
+                }
+
+            }
+
+
+            // ====================================================
+            // ADMIN STATUS
+            // ====================================================
+
+            const statusMatch =
+                p.match(
+                    /^\/api\/admin\/users\/([^/]+)\/status$/
+                );
+
+
+            if (
+                req.method === "PATCH" &&
+                statusMatch
+            ) {
+
+                const token =
+                    String(
+                        req.headers.authorization ||
+                        ""
+                    )
+                    .replace(
+                        /^Bearer\s+/i,
+                        ""
+                    );
+
+
+                if (!token) {
+
+                    return sendJSON(
+                        res,
+                        401,
+                        {
+                            error:
+                                "Unauthorized"
+                        }
+                    );
+
+                }
+
+
+                try {
+
+                    const id =
+                        decodeURIComponent(
+                            statusMatch[1]
+                        );
+
+
+                    const data =
+                        await readBody(req);
+
+
+                    const result =
+                        await liveRequest(
+                            "PATCH",
+                            "/api/admin/users/" +
+                            encodeURIComponent(id) +
+                            "/status",
+                            token,
+                            data
+                        );
+
+
+                    return sendJSON(
+                        res,
+                        result.status,
+                        result.data
+                    );
+
+
+                } catch (error) {
+
+                    return sendJSON(
+                        res,
+                        502,
+                        {
+                            error:
+                                error.message
+                        }
+                    );
+
+                }
+
+            }
+
+
+            // ====================================================
+            // ADMIN PAGE
+            // ====================================================
+
+            if (
+                req.method === "GET" &&
+                (
+                    p === "/" ||
+                    p === "/admin.html"
+                )
+            ) {
+
+                return sendHTML(
+                    res,
+                    adminPage()
                 );
 
             }
 
 
-            /* ==================================================
-               404
-            ================================================== */
+            // ====================================================
+            // 404
+            // ====================================================
 
             return sendJSON(
                 res,
@@ -2261,30 +2743,16 @@ const server =
     );
 
 
-/* ============================================================
-   SERVER ERROR
-============================================================ */
+// ============================================================
+// ERROR
+// ============================================================
 
 server.on(
     "error",
     error => {
 
-        if(
-            error.code ===
-            "EADDRINUSE"
-        ){
-
-            console.error(
-                "Port " +
-                PORT +
-                " is already in use."
-            );
-
-            return;
-        }
-
-
         console.error(
+            "Admin server error:",
             error
         );
 
@@ -2292,18 +2760,39 @@ server.on(
 );
 
 
-/* ============================================================
-   START
-============================================================ */
+// ============================================================
+// START
+// ============================================================
 
 server.listen(
     PORT,
-    "0.0.0.0",
+    "127.0.0.1",
     () => {
 
         console.log(
-            "Noon Market server running on port " +
-            PORT
+            "======================================"
+        );
+
+        console.log(
+            "Noon Market Admin Panel"
+        );
+
+        console.log(
+            "http://127.0.0.1:" +
+            PORT +
+            "/admin.html"
+        );
+
+        console.log(
+            "Live Server:"
+        );
+
+        console.log(
+            LIVE_SERVER
+        );
+
+        console.log(
+            "======================================"
         );
 
     }
