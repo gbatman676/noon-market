@@ -1,232 +1,306 @@
 const http = require("http");
+const { URL } = require("url");
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
-const PORT = 3001;
-
-const LIVE_BACKEND =
-    process.env.LIVE_BACKEND ||
-    "https://noon-market.onrender.com";
+const PORT = Number(process.env.PORT) || 3000;
+const HOST = process.env.HOST || "0.0.0.0";
 
 const ADMIN_USER =
     process.env.ADMIN_USER || "admin";
 
 const ADMIN_PASSWORD =
-    process.env.ADMIN_PASSWORD || "ChangeMe123!";
+    process.env.ADMIN_PASSWORD ||
+    "CHANGE_THIS_ADMIN_PASSWORD";
 
-const ADMIN_API_KEY =
-    process.env.ADMIN_API_KEY || "";
+const TG =
+    "https://t.me/customer_service_34";
 
-const sessions = new Set();
+const DB =
+    path.join(__dirname, "data.json");
 
-function sendJSON(res, status, data) {
+function load() {
+    try {
+        if (!fs.existsSync(DB)) {
+            return {
+                users: [],
+                transactions: [],
+                audit: []
+            };
+        }
+
+        const data =
+            JSON.parse(
+                fs.readFileSync(DB, "utf8")
+            );
+
+        return {
+            users: Array.isArray(data.users)
+                ? data.users
+                : [],
+
+            transactions:
+                Array.isArray(data.transactions)
+                    ? data.transactions
+                    : [],
+
+            audit:
+                Array.isArray(data.audit)
+                    ? data.audit
+                    : []
+        };
+    } catch (error) {
+        console.error("Database load error:", error);
+
+        return {
+            users: [],
+            transactions: [],
+            audit: []
+        };
+    }
+}
+
+const db = load();
+
+const sessions = new Map();
+
+const now = () =>
+    new Date().toISOString();
+
+const id = () =>
+    crypto.randomUUID();
+
+function save() {
+    fs.writeFileSync(
+        DB,
+        JSON.stringify(db, null, 2),
+        "utf8"
+    );
+}
+
+function hash(password, salt) {
+    const actualSalt =
+        salt ||
+        crypto.randomBytes(16).toString("hex");
+
+    return {
+        s: actualSalt,
+        h: crypto
+            .scryptSync(
+                password,
+                actualSalt,
+                64
+            )
+            .toString("hex")
+    };
+}
+
+function verify(password, salt, storedHash) {
+    try {
+        const calculated =
+            crypto.scryptSync(
+                password,
+                salt,
+                64
+            );
+
+        const stored =
+            Buffer.from(
+                storedHash,
+                "hex"
+            );
+
+        return (
+            stored.length === calculated.length &&
+            crypto.timingSafeEqual(
+                stored,
+                calculated
+            )
+        );
+    } catch {
+        return false;
+    }
+}
+
+function out(res, status, data) {
     res.writeHead(status, {
-        "Content-Type": "application/json; charset=utf-8",
-        "Cache-Control": "no-store",
-        "Access-Control-Allow-Origin": "same-origin",
+        "Content-Type":
+            "application/json; charset=utf-8",
+
+        "Cache-Control":
+            "no-store",
+
+        "Access-Control-Allow-Origin":
+            "*",
+
         "Access-Control-Allow-Headers":
             "Content-Type, Authorization",
+
         "Access-Control-Allow-Methods":
             "GET,POST,PATCH,OPTIONS"
     });
 
-    res.end(JSON.stringify(data));
-}
-
-function body(req) {
-    return new Promise((resolve, reject) => {
-        let data = "";
-
-        req.on("data", chunk => {
-            data += chunk;
-        });
-
-        req.on("end", () => {
-            if (!data) {
-                resolve({});
-                return;
-            }
-
-            try {
-                resolve(JSON.parse(data));
-            } catch {
-                reject(new Error("Invalid JSON"));
-            }
-        });
-
-        req.on("error", reject);
-    });
-}
-
-function token() {
-    return (
-        Date.now().toString(36) +
-        "-" +
-        Math.random().toString(36).slice(2) +
-        "-" +
-        Math.random().toString(36).slice(2)
+    res.end(
+        JSON.stringify(data)
     );
 }
 
-function loggedIn(req) {
-    const auth =
+function body(req) {
+    return new Promise(
+        (resolve, reject) => {
+
+            let data = "";
+
+            req.on(
+                "data",
+                chunk => {
+                    data += chunk;
+                }
+            );
+
+            req.on(
+                "end",
+                () => {
+                    if (!data) {
+                        resolve({});
+                        return;
+                    }
+
+                    try {
+                        resolve(
+                            JSON.parse(data)
+                        );
+                    } catch {
+                        reject(
+                            new Error(
+                                "Invalid JSON"
+                            )
+                        );
+                    }
+                }
+            );
+
+            req.on(
+                "error",
+                reject
+            );
+        }
+    );
+}
+
+function auth(req) {
+    const header =
         req.headers.authorization || "";
 
-    if (!auth.startsWith("Bearer ")) {
-        return false;
+    if (!header.startsWith("Bearer ")) {
+        return null;
     }
 
-    return sessions.has(auth.slice(7));
+    const token =
+        header.slice(7);
+
+    return (
+        sessions.get(token) ||
+        null
+    );
 }
 
-function adminHTML() {
-    const file =
-        path.join(__dirname, "admin.html");
-
-    if (!fs.existsSync(file)) {
-        return "<h1>admin.html not found</h1>";
-    }
-
-    return fs.readFileSync(file, "utf8");
-}
-
-function proxy(req, res) {
-    if (!ADMIN_API_KEY) {
-        return sendJSON(res, 500, {
-            error:
-                "ADMIN_API_KEY is not configured"
-        });
-    }
-
-    let target;
-
-    try {
-        target =
-            new URL(
-                LIVE_BACKEND + req.url
-            );
-    } catch {
-        return sendJSON(res, 500, {
-            error: "Invalid live backend URL"
-        });
-    }
-
-    const options = {
-        protocol: target.protocol,
-        hostname: target.hostname,
-        port:
-            target.port ||
-            (target.protocol === "https:"
-                ? 443
-                : 80),
-        path:
-            target.pathname +
-            target.search,
-        method: req.method,
-        headers: {
-            "Content-Type":
-                req.headers["content-type"] ||
-                "application/json",
-            "Accept": "application/json",
-            "X-Admin-Key": ADMIN_API_KEY
-        }
-    };
-
-    const transport =
-        target.protocol === "https:"
-            ? require("https")
-            : http;
-
-    const upstream =
-        transport.request(
-            options,
-            upstreamRes => {
-                let data = "";
-
-                upstreamRes.on(
-                    "data",
-                    chunk => {
-                        data += chunk;
-                    }
-                );
-
-                upstreamRes.on(
-                    "end",
-                    () => {
-                        res.writeHead(
-                            upstreamRes.statusCode || 502,
-                            {
-                                "Content-Type":
-                                    upstreamRes.headers[
-                                        "content-type"
-                                    ] ||
-                                    "application/json; charset=utf-8",
-                                "Cache-Control":
-                                    "no-store",
-                                "Access-Control-Allow-Origin":
-                                    "same-origin"
-                            }
-                        );
-
-                        res.end(data);
-                    }
-                );
-            }
-        );
-
-    upstream.on("error", error => {
-        console.error(
-            "Live backend error:",
-            error.message
-        );
-
-        sendJSON(res, 502, {
-            error:
-                "Live backend unavailable"
-        });
+function audit(
+    actor,
+    action,
+    details
+) {
+    db.audit.push({
+        id: id(),
+        actor,
+        action,
+        details,
+        time: now()
     });
 
-    body(req)
-        .then(data => {
-            if (
-                req.method !== "GET" &&
-                req.method !== "HEAD"
-            ) {
-                upstream.write(
-                    JSON.stringify(data)
-                );
-            }
+    save();
+}
 
-            upstream.end();
-        })
-        .catch(error => {
-            upstream.destroy();
+function publicUser(user) {
+    return {
+        id: user.id,
+        email: user.email,
+        phone: user.phone,
+        status: user.status,
+        balance: Number(
+            user.balance || 0
+        ),
+        createdAt: user.createdAt
+    };
+}
 
-            sendJSON(res, 400, {
-                error: error.message
-            });
-        });
+async function market() {
+    const response =
+        await fetch(
+            "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,tether&vs_currencies=usd&include_24hr_change=true"
+        );
+
+    if (!response.ok) {
+        throw new Error(
+            "Market API unavailable"
+        );
+    }
+
+    const data =
+        await response.json();
+
+    return {
+        btc: {
+            price:
+                data.bitcoin.usd,
+
+            change24h:
+                data.bitcoin
+                    .usd_24h_change || 0
+        },
+
+        usdt: {
+            price:
+                data.tether.usd,
+
+            change24h:
+                data.tether
+                    .usd_24h_change || 0
+        },
+
+        updatedAt: now()
+    };
 }
 
 const server =
     http.createServer(
         async (req, res) => {
 
-            if (req.method === "OPTIONS") {
-                res.writeHead(204);
-                return res.end();
+            if (
+                req.method === "OPTIONS"
+            ) {
+                return out(
+                    res,
+                    204,
+                    {}
+                );
             }
 
             const url =
                 new URL(
                     req.url,
-                    "http://127.0.0.1:3001"
+                    "http://127.0.0.1"
                 );
 
             const p =
                 url.pathname;
 
             try {
+
+                // =========================
+                // ADMIN HTML
+                // =========================
 
                 if (
                     req.method === "GET" &&
@@ -235,33 +309,335 @@ const server =
                         p === "/admin.html"
                     )
                 ) {
-                    res.writeHead(200, {
-                        "Content-Type":
-                            "text/html; charset=utf-8",
-                        "Cache-Control":
-                            "no-store"
-                    });
+
+                    const adminFile =
+                        path.join(
+                            __dirname,
+                            "admin.html"
+                        );
+
+                    if (
+                        !fs.existsSync(
+                            adminFile
+                        )
+                    ) {
+                        return out(
+                            res,
+                            404,
+                            {
+                                error:
+                                    "admin.html not found"
+                            }
+                        );
+                    }
+
+                    res.writeHead(
+                        200,
+                        {
+                            "Content-Type":
+                                "text/html; charset=utf-8",
+
+                            "Cache-Control":
+                                "no-store"
+                        }
+                    );
 
                     return res.end(
-                        adminHTML()
+                        fs.readFileSync(
+                            adminFile,
+                            "utf8"
+                        )
                     );
                 }
+
+
+                // =========================
+                // MARKET
+                // =========================
+
+                if (
+                    req.method === "GET" &&
+                    p === "/api/market"
+                ) {
+                    return out(
+                        res,
+                        200,
+                        await market()
+                    );
+                }
+
+
+                // =========================
+                // CONFIG
+                // =========================
+
+                if (
+                    req.method === "GET" &&
+                    p === "/api/config"
+                ) {
+                    return out(
+                        res,
+                        200,
+                        {
+                            customerService:
+                                TG
+                        }
+                    );
+                }
+
+
+                // =========================
+                // USER REGISTER
+                // =========================
+
+                if (
+                    req.method === "POST" &&
+                    p === "/api/register"
+                ) {
+
+                    const b =
+                        await body(req);
+
+                    const email =
+                        String(
+                            b.email || ""
+                        )
+                        .trim()
+                        .toLowerCase();
+
+                    const phone =
+                        String(
+                            b.phone || ""
+                        ).trim();
+
+                    const password =
+                        String(
+                            b.password || ""
+                        );
+
+                    if (
+                        !email &&
+                        !phone
+                    ) {
+                        return out(
+                            res,
+                            400,
+                            {
+                                error:
+                                    "Email or phone is required"
+                            }
+                        );
+                    }
+
+                    if (
+                        password.length < 8
+                    ) {
+                        return out(
+                            res,
+                            400,
+                            {
+                                error:
+                                    "Password must be at least 8 characters"
+                            }
+                        );
+                    }
+
+                    if (
+                        db.users.some(
+                            user =>
+                                (
+                                    email &&
+                                    user.email === email
+                                ) ||
+                                (
+                                    phone &&
+                                    user.phone === phone
+                                )
+                        )
+                    ) {
+                        return out(
+                            res,
+                            409,
+                            {
+                                error:
+                                    "Account already exists"
+                            }
+                        );
+                    }
+
+                    const passwordData =
+                        hash(password);
+
+                    const user = {
+                        id: id(),
+
+                        email:
+                            email || null,
+
+                        phone:
+                            phone || null,
+
+                        passwordHash:
+                            passwordData.h,
+
+                        passwordSalt:
+                            passwordData.s,
+
+                        status:
+                            "active",
+
+                        balance: 0,
+
+                        createdAt:
+                            now()
+                    };
+
+                    db.users.push(user);
+
+                    save();
+
+                    audit(
+                        "system",
+                        "user_registered",
+                        {
+                            userId:
+                                user.id
+                        }
+                    );
+
+                    return out(
+                        res,
+                        201,
+                        {
+                            user:
+                                publicUser(
+                                    user
+                                )
+                        }
+                    );
+                }
+
+
+                // =========================
+                // USER LOGIN
+                // =========================
+
+                if (
+                    req.method === "POST" &&
+                    p === "/api/login"
+                ) {
+
+                    const b =
+                        await body(req);
+
+                    const identifier =
+                        String(
+                            b.identifier || ""
+                        );
+
+                    const user =
+                        db.users.find(
+                            u =>
+                                (
+                                    u.email &&
+                                    u.email ===
+                                        identifier
+                                            .toLowerCase()
+                                ) ||
+                                (
+                                    u.phone &&
+                                    u.phone ===
+                                        identifier
+                                )
+                        );
+
+                    if (
+                        !user ||
+                        !verify(
+                            String(
+                                b.password || ""
+                            ),
+                            user.passwordSalt,
+                            user.passwordHash
+                        )
+                    ) {
+                        return out(
+                            res,
+                            401,
+                            {
+                                error:
+                                    "Invalid credentials"
+                            }
+                        );
+                    }
+
+                    if (
+                        user.status !==
+                        "active"
+                    ) {
+                        return out(
+                            res,
+                            403,
+                            {
+                                error:
+                                    "Account is suspended"
+                            }
+                        );
+                    }
+
+                    const token =
+                        crypto
+                            .randomBytes(
+                                32
+                            )
+                            .toString(
+                                "hex"
+                            );
+
+                    sessions.set(
+                        token,
+                        {
+                            role: "user",
+                            userId:
+                                user.id
+                        }
+                    );
+
+                    return out(
+                        res,
+                        200,
+                        {
+                            token,
+
+                            user:
+                                publicUser(
+                                    user
+                                )
+                        }
+                    );
+                }
+
+
+                // =========================
+                // ADMIN LOGIN
+                // =========================
 
                 if (
                     req.method === "POST" &&
                     p === "/api/admin/login"
                 ) {
-                    const data =
+
+                    const b =
                         await body(req);
 
                     const username =
                         String(
-                            data.username || ""
+                            b.username || ""
                         );
 
                     const password =
                         String(
-                            data.password || ""
+                            b.password || ""
                         );
 
                     if (
@@ -270,37 +646,62 @@ const server =
                         password !==
                             ADMIN_PASSWORD
                     ) {
-                        return sendJSON(
+                        return out(
                             res,
                             401,
                             {
                                 error:
-                                    "Invalid admin username or password"
+                                    "Invalid admin credentials"
                             }
                         );
                     }
 
-                    const t = token();
+                    const token =
+                        crypto
+                            .randomBytes(
+                                32
+                            )
+                            .toString(
+                                "hex"
+                            );
 
-                    sessions.add(t);
+                    sessions.set(
+                        token,
+                        {
+                            role: "admin"
+                        }
+                    );
 
-                    return sendJSON(
+                    audit(
+                        "admin",
+                        "admin_login",
+                        {}
+                    );
+
+                    return out(
                         res,
                         200,
                         {
-                            success: true,
-                            token: t
+                            token
                         }
                     );
                 }
 
+
+                // =========================
+                // CURRENT USER
+                // =========================
+
                 if (
-                    p.startsWith(
-                        "/api/admin/"
-                    )
+                    req.method === "GET" &&
+                    p === "/api/me"
                 ) {
-                    if (!loggedIn(req)) {
-                        return sendJSON(
+
+                    const session =
+                        auth(req);
+
+                    if (!session) {
+                        return out(
                             res,
                             401,
                             {
@@ -310,13 +711,530 @@ const server =
                         );
                     }
 
-                    return proxy(
-                        req,
-                        res
+                    if (
+                        session.role ===
+                        "admin"
+                    ) {
+                        return out(
+                            res,
+                            200,
+                            {
+                                role:
+                                    "admin"
+                            }
+                        );
+                    }
+
+                    const user =
+                        db.users.find(
+                            u =>
+                                u.id ===
+                                session.userId
+                        );
+
+                    if (!user) {
+                        return out(
+                            res,
+                            404,
+                            {
+                                error:
+                                    "User not found"
+                            }
+                        );
+                    }
+
+                    return out(
+                        res,
+                        200,
+                        {
+                            role:
+                                "user",
+
+                            user:
+                                publicUser(
+                                    user
+                                )
+                        }
                     );
                 }
 
-                return sendJSON(
+
+                // =========================
+                // ADMIN USERS LIST
+                // =========================
+
+                if (
+                    req.method === "GET" &&
+                    p === "/api/admin/users"
+                ) {
+
+                    const session =
+                        auth(req);
+
+                    if (
+                        !session ||
+                        session.role !==
+                            "admin"
+                    ) {
+                        return out(
+                            res,
+                            403,
+                            {
+                                error:
+                                    "Admin access required"
+                            }
+                        );
+                    }
+
+                    const q =
+                        String(
+                            url.searchParams.get(
+                                "q"
+                            ) || ""
+                        )
+                        .toLowerCase()
+                        .trim();
+
+                    const users =
+                        db.users.filter(
+                            user => {
+
+                                if (!q) {
+                                    return true;
+                                }
+
+                                return [
+                                    user.email,
+                                    user.phone,
+                                    user.id
+                                ]
+                                    .filter(Boolean)
+                                    .some(
+                                        value =>
+                                            String(
+                                                value
+                                            )
+                                            .toLowerCase()
+                                            .includes(q)
+                                    );
+                            }
+                        );
+
+                    return out(
+                        res,
+                        200,
+                        {
+                            users:
+                                users.map(
+                                    publicUser
+                                )
+                        }
+                    );
+                }
+
+
+                // =========================
+                // ADMIN SINGLE USER
+                // =========================
+
+                let match =
+                    p.match(
+                        /^\/api\/admin\/users\/([^/]+)$/
+                    );
+
+                if (
+                    match &&
+                    req.method === "GET"
+                ) {
+
+                    const session =
+                        auth(req);
+
+                    if (
+                        !session ||
+                        session.role !==
+                            "admin"
+                    ) {
+                        return out(
+                            res,
+                            403,
+                            {
+                                error:
+                                    "Admin access required"
+                            }
+                        );
+                    }
+
+                    const user =
+                        db.users.find(
+                            u =>
+                                u.id ===
+                                match[1]
+                        );
+
+                    if (!user) {
+                        return out(
+                            res,
+                            404,
+                            {
+                                error:
+                                    "User not found"
+                            }
+                        );
+                    }
+
+                    return out(
+                        res,
+                        200,
+                        {
+                            user:
+                                publicUser(
+                                    user
+                                ),
+
+                            transactions:
+                                db.transactions.filter(
+                                    t =>
+                                        t.userId ===
+                                        user.id
+                                ),
+
+                            audit:
+                                db.audit.filter(
+                                    a =>
+                                        a.details &&
+                                        a.details.userId ===
+                                            user.id
+                                )
+                        }
+                    );
+                }
+
+
+                // =========================
+                // CHANGE USER BALANCE
+                // =========================
+
+                match =
+                    p.match(
+                        /^\/api\/admin\/users\/([^/]+)\/balance$/
+                    );
+
+                if (
+                    match &&
+                    req.method === "POST"
+                ) {
+
+                    const session =
+                        auth(req);
+
+                    if (
+                        !session ||
+                        session.role !==
+                            "admin"
+                    ) {
+                        return out(
+                            res,
+                            403,
+                            {
+                                error:
+                                    "Admin access required"
+                            }
+                        );
+                    }
+
+                    const user =
+                        db.users.find(
+                            u =>
+                                u.id ===
+                                match[1]
+                        );
+
+                    if (!user) {
+                        return out(
+                            res,
+                            404,
+                            {
+                                error:
+                                    "User not found"
+                            }
+                        );
+                    }
+
+                    const b =
+                        await body(req);
+
+                    const amount =
+                        Number(
+                            b.amount
+                        );
+
+                    const reason =
+                        String(
+                            b.reason || ""
+                        ).trim();
+
+                    const type =
+                        String(
+                            b.type || ""
+                        );
+
+                    if (
+                        !Number.isFinite(
+                            amount
+                        ) ||
+                        amount <= 0 ||
+                        ![
+                            "credit",
+                            "debit"
+                        ].includes(type) ||
+                        !reason
+                    ) {
+                        return out(
+                            res,
+                            400,
+                            {
+                                error:
+                                    "Valid type, positive amount and reason are required"
+                            }
+                        );
+                    }
+
+                    if (
+                        type === "debit" &&
+                        Number(
+                            user.balance
+                        ) < amount
+                    ) {
+                        return out(
+                            res,
+                            400,
+                            {
+                                error:
+                                    "Insufficient recorded balance"
+                            }
+                        );
+                    }
+
+                    const delta =
+                        type === "credit"
+                            ? amount
+                            : -amount;
+
+                    user.balance =
+                        Number(
+                            (
+                                Number(
+                                    user.balance
+                                ) +
+                                delta
+                            ).toFixed(2)
+                        );
+
+                    const transaction = {
+                        id: id(),
+
+                        userId:
+                            user.id,
+
+                        type,
+
+                        amount:
+                            delta,
+
+                        reason,
+
+                        time:
+                            now(),
+
+                        actor:
+                            "admin"
+                    };
+
+                    db.transactions.push(
+                        transaction
+                    );
+
+                    save();
+
+                    audit(
+                        "admin",
+                        "balance_ledger_entry",
+                        {
+                            userId:
+                                user.id,
+
+                            transactionId:
+                                transaction.id,
+
+                            amount:
+                                delta,
+
+                            reason
+                        }
+                    );
+
+                    return out(
+                        res,
+                        200,
+                        {
+                            user:
+                                publicUser(
+                                    user
+                                ),
+
+                            transaction
+                        }
+                    );
+                }
+
+
+                // =========================
+                // SUSPEND / ACTIVATE
+                // =========================
+
+                match =
+                    p.match(
+                        /^\/api\/admin\/users\/([^/]+)\/status$/
+                    );
+
+                if (
+                    match &&
+                    req.method === "PATCH"
+                ) {
+
+                    const session =
+                        auth(req);
+
+                    if (
+                        !session ||
+                        session.role !==
+                            "admin"
+                    ) {
+                        return out(
+                            res,
+                            403,
+                            {
+                                error:
+                                    "Admin access required"
+                            }
+                        );
+                    }
+
+                    const user =
+                        db.users.find(
+                            u =>
+                                u.id ===
+                                match[1]
+                        );
+
+                    if (!user) {
+                        return out(
+                            res,
+                            404,
+                            {
+                                error:
+                                    "User not found"
+                            }
+                        );
+                    }
+
+                    const b =
+                        await body(req);
+
+                    if (
+                        ![
+                            "active",
+                            "suspended"
+                        ].includes(
+                            b.status
+                        )
+                    ) {
+                        return out(
+                            res,
+                            400,
+                            {
+                                error:
+                                    "Invalid status"
+                            }
+                        );
+                    }
+
+                    user.status =
+                        b.status;
+
+                    save();
+
+                    audit(
+                        "admin",
+                        "account_status_changed",
+                        {
+                            userId:
+                                user.id,
+
+                            status:
+                                user.status
+                        }
+                    );
+
+                    return out(
+                        res,
+                        200,
+                        {
+                            user:
+                                publicUser(
+                                    user
+                                )
+                        }
+                    );
+                }
+
+
+                // =========================
+                // ADMIN AUDIT
+                // =========================
+
+                if (
+                    req.method === "GET" &&
+                    p === "/api/admin/audit"
+                ) {
+
+                    const session =
+                        auth(req);
+
+                    if (
+                        !session ||
+                        session.role !==
+                            "admin"
+                    ) {
+                        return out(
+                            res,
+                            403,
+                            {
+                                error:
+                                    "Admin access required"
+                            }
+                        );
+                    }
+
+                    return out(
+                        res,
+                        200,
+                        {
+                            audit:
+                                db.audit
+                                    .slice(-500)
+                                    .reverse()
+                        }
+                    );
+                }
+
+
+                // =========================
+                // NOT FOUND
+                // =========================
+
+                return out(
                     res,
                     404,
                     {
@@ -327,9 +1245,11 @@ const server =
 
             } catch (error) {
 
-                console.error(error);
+                console.error(
+                    error
+                );
 
-                return sendJSON(
+                return out(
                     res,
                     500,
                     {
@@ -343,17 +1263,15 @@ const server =
 
 server.listen(
     PORT,
-    "127.0.0.1",
+    HOST,
     () => {
+
         console.log(
-            "Noon Market ADMIN: http://127.0.0.1:" +
-            PORT +
-            "/admin.html"
+            `Noon Market backend: http://${HOST}:${PORT}`
         );
 
         console.log(
-            "Live backend: " +
-            LIVE_BACKEND
+            "Admin page: /admin.html"
         );
     }
 );
