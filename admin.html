@@ -1,1 +1,787 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Noon Market Admin</title><style>body{font:15px Arial;margin:0;background:#f5f6f8;color:#101828}.wrap{max-width:1100px;margin:auto;padding:25px}.box,.user{background:#fff;border-radius:16px;padding:18px;margin:10px 0}.user{display:flex;justify-content:space-between;align-items:center;gap:12px}input,select,button{padding:11px;border:1px solid #d0d5dd;border-radius:10px;margin:4px}button{cursor:pointer}.primary{background:#111827;color:#fff}.muted{color:#667085}.grid{display:grid;grid-template-columns:1fr 1fr;gap:15px}@media(max-width:700px){.grid{grid-template-columns:1fr}.user{display:block}}</style></head><body><main class="wrap"><h1>Noon Market Admin</h1><section id="login" class="box"><input id="au" placeholder="Admin username"><input id="ap" type="password" placeholder="Admin password"><button class="primary" onclick="login()">Sign In</button><p class="muted">Use ADMIN_USER and ADMIN_PASSWORD environment variables for production.</p></section><section id="panel" style="display:none"><div class="box"><input id="q" placeholder="Search email, phone or user ID"><button onclick="loadUsers()">Search</button><button onclick="loadUsers()">Refresh</button></div><div id="users"></div><div id="detail"></div></section></main><script>let token='';const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));async function api(p,o={}){o.headers={...(o.headers||{}),Authorization:'Bearer '+token,'Content-Type':'application/json'};let r=await fetch(p,o),d=await r.json();if(!r.ok)throw Error(d.error||'Request failed');return d}async function login(){try{let d=await api('/api/admin/login',{method:'POST',body:JSON.stringify({username:au.value,password:ap.value})});token=d.token;document.getElementById('login').style.display='none';document.getElementById('panel').style.display='block';loadUsers()}catch(e){alert(e.message)}}async function loadUsers(){let d=await api('/api/admin/users?q='+encodeURIComponent(q.value));users.innerHTML=d.users.map(x=>`<div class=user><div><b>${esc(x.email||x.phone)}</b><div class=muted>${x.id} · ${x.status}</div></div><div><b>$${Number(x.balance).toFixed(2)}</b><button onclick="openUser('${x.id}')">Open</button></div></div>`).join('')||'<p>No users found.</p>'}async function openUser(id){let d=await api('/api/admin/users/'+id);detail.innerHTML=`<div class=box><h2>User</h2><p><b>Email:</b> ${esc(d.user.email||'—')}</p><p><b>Phone:</b> ${esc(d.user.phone||'—')}</p><p><b>Balance:</b> $${Number(d.user.balance).toFixed(2)}</p><p><b>Status:</b> ${d.user.status}</p><div class=grid><div><h3>Ledger entry</h3><select id=typ><option value=credit>Credit</option><option value=debit>Debit</option></select><input id=amt type=number step=0.01 placeholder="Amount"><input id=reason placeholder="Reason / reference"><button class=primary onclick="changeBalance('${id}')">Record Entry</button></div><div><h3>Account status</h3><button onclick="changeStatus('${id}','${d.user.status==='active'?'suspended':'active'}')">${d.user.status==='active'?'Suspend Account':'Activate Account'}</button></div></div><h3>Transactions</h3>${d.transactions.map(t=>`<p>${t.type} · $${Number(t.amount).toFixed(2)} · ${esc(t.reason)} · ${new Date(t.time).toLocaleString()}</p>`).join('')||'<p class=muted>No transactions.</p>'}</div>`}async function changeBalance(id){try{await api('/api/admin/users/'+id+'/balance',{method:'POST',body:JSON.stringify({type:typ.value,amount:Number(amt.value),reason:reason.value})});openUser(id);loadUsers()}catch(e){alert(e.message)}}async function changeStatus(id,status){try{await api('/api/admin/users/'+id+'/status',{method:'PATCH',body:JSON.stringify({status})});openUser(id);loadUsers()}catch(e){alert(e.message)}}</script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta
+        name="viewport"
+        content="width=device-width,initial-scale=1"
+    >
+
+    <title>Noon Market Admin</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: Arial, sans-serif;
+            background:
+                radial-gradient(
+                    circle at top,
+                    #16284a,
+                    #050914 55%,
+                    #02040a
+                );
+            color: #fff;
+        }
+
+        .wrap {
+            width: min(1200px, 94%);
+            margin: 35px auto;
+        }
+
+        .card {
+            background: rgba(12, 20, 38, .94);
+            border: 1px solid #243452;
+            border-radius: 18px;
+            padding: 24px;
+            box-shadow: 0 20px 60px rgba(0,0,0,.35);
+        }
+
+        h1 {
+            margin-top: 0;
+        }
+
+        input,
+        button,
+        select {
+            border: 0;
+            border-radius: 10px;
+            padding: 12px 14px;
+            font-size: 14px;
+        }
+
+        input {
+            width: 100%;
+            background: #0a1222;
+            color: white;
+            border: 1px solid #273858;
+            margin-bottom: 12px;
+        }
+
+        button {
+            cursor: pointer;
+            font-weight: bold;
+            background: #2563eb;
+            color: white;
+        }
+
+        button:hover {
+            opacity: .88;
+        }
+
+        .danger {
+            background: #dc2626;
+        }
+
+        .success {
+            background: #16a34a;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .login {
+            max-width: 430px;
+            margin: 100px auto;
+        }
+
+        .top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .search {
+            margin-bottom: 20px;
+        }
+
+        .status {
+            padding: 6px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .active {
+            background: #14532d;
+            color: #86efac;
+        }
+
+        .suspended {
+            background: #7f1d1d;
+            color: #fecaca;
+        }
+
+        .users {
+            display: grid;
+            gap: 14px;
+        }
+
+        .user {
+            border: 1px solid #263653;
+            border-radius: 14px;
+            padding: 18px;
+            background: #091221;
+        }
+
+        .user-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .muted {
+            color: #8fa0bd;
+            font-size: 13px;
+        }
+
+        .balance {
+            font-size: 25px;
+            font-weight: bold;
+            margin: 12px 0;
+        }
+
+        .actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 14px;
+        }
+
+        .message {
+            margin-top: 12px;
+            color: #fca5a5;
+        }
+
+        .details {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #243452;
+        }
+    </style>
+</head>
+
+<body>
+
+<div id="loginBox" class="login card">
+
+    <h1>Noon Market</h1>
+
+    <p class="muted">
+        Secure Admin Panel
+    </p>
+
+    <input
+        id="username"
+        placeholder="Admin username"
+        autocomplete="username"
+    >
+
+    <input
+        id="password"
+        type="password"
+        placeholder="Admin password"
+        autocomplete="current-password"
+    >
+
+    <button
+        style="width:100%"
+        onclick="login()"
+    >
+        Sign In
+    </button>
+
+    <div
+        id="loginMessage"
+        class="message"
+    ></div>
+</div>
+
+
+<div
+    id="panel"
+    class="wrap hidden"
+>
+
+    <div class="card">
+
+        <div class="top">
+
+            <div>
+                <h1>Noon Market Admin</h1>
+
+                <div
+                    id="count"
+                    class="muted"
+                >
+                    Customers: 0
+                </div>
+            </div>
+
+            <button
+                class="danger"
+                onclick="logout()"
+            >
+                Logout
+            </button>
+
+        </div>
+
+        <input
+            id="search"
+            class="search"
+            placeholder="Search email, phone, ID..."
+            oninput="loadUsers()"
+        >
+
+        <div
+            id="message"
+            class="message"
+        ></div>
+
+        <div
+            id="users"
+            class="users"
+        ></div>
+
+    </div>
+</div>
+
+
+<script>
+
+let adminToken =
+    localStorage.getItem(
+        "noon_admin_token"
+    ) || "";
+
+
+function apiHeaders() {
+
+    return {
+        "Content-Type":
+            "application/json",
+
+        "Authorization":
+            "Bearer " +
+            adminToken
+    };
+}
+
+
+async function login() {
+
+    const username =
+        document.getElementById(
+            "username"
+        ).value;
+
+    const password =
+        document.getElementById(
+            "password"
+        ).value;
+
+    const message =
+        document.getElementById(
+            "loginMessage"
+        );
+
+    message.textContent = "";
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/admin/login",
+                {
+                    method: "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:
+                        JSON.stringify({
+                            username,
+                            password
+                        })
+                }
+            );
+
+        const data =
+            await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                data.error ||
+                "Login failed"
+            );
+        }
+
+        adminToken =
+            data.token;
+
+        localStorage.setItem(
+            "noon_admin_token",
+            adminToken
+        );
+
+        document
+            .getElementById(
+                "loginBox"
+            )
+            .classList.add(
+                "hidden"
+            );
+
+        document
+            .getElementById(
+                "panel"
+            )
+            .classList.remove(
+                "hidden"
+            );
+
+        loadUsers();
+
+    } catch (error) {
+
+        message.textContent =
+            error.message;
+    }
+}
+
+
+function logout() {
+
+    adminToken = "";
+
+    localStorage.removeItem(
+        "noon_admin_token"
+    );
+
+    location.reload();
+}
+
+
+async function loadUsers() {
+
+    if (!adminToken) {
+        return;
+    }
+
+    const query =
+        document.getElementById(
+            "search"
+        ).value.trim();
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/admin/users?q=" +
+                encodeURIComponent(query),
+                {
+                    headers:
+                        apiHeaders()
+                }
+            );
+
+        const data =
+            await response.json();
+
+        if (
+            response.status === 401
+        ) {
+            logout();
+            return;
+        }
+
+        if (!response.ok) {
+            throw new Error(
+                data.error ||
+                "Unable to load users"
+            );
+        }
+
+        renderUsers(
+            data.users || []
+        );
+
+    } catch (error) {
+
+        document.getElementById(
+            "message"
+        ).textContent =
+            error.message;
+    }
+}
+
+
+function renderUsers(users) {
+
+    document.getElementById(
+        "count"
+    ).textContent =
+        "Customers: " +
+        users.length;
+
+    const container =
+        document.getElementById(
+            "users"
+        );
+
+    if (!users.length) {
+
+        container.innerHTML =
+            `<div class="muted">
+                No customers found.
+             </div>`;
+
+        return;
+    }
+
+    container.innerHTML =
+        users.map(user => {
+
+            const status =
+                user.status ===
+                "suspended"
+                    ? "suspended"
+                    : "active";
+
+            const statusText =
+                status === "active"
+                    ? "ACTIVE"
+                    : "SUSPENDED";
+
+            return `
+                <div class="user">
+
+                    <div class="user-head">
+
+                        <div>
+                            <strong>
+                                ${escapeHTML(
+                                    user.customerId ||
+                                    user.id
+                                )}
+                            </strong>
+
+                            <div class="muted">
+                                ${escapeHTML(
+                                    user.email ||
+                                    user.phone ||
+                                    ""
+                                )}
+                            </div>
+                        </div>
+
+                        <span
+                            class="status ${status}"
+                        >
+                            ${statusText}
+                        </span>
+
+                    </div>
+
+                    <div class="balance">
+                        $${Number(
+                            user.balance || 0
+                        ).toFixed(2)}
+                    </div>
+
+                    <div class="muted">
+                        ID:
+                        ${escapeHTML(
+                            user.id
+                        )}
+                    </div>
+
+                    <div class="actions">
+
+                        <button
+                            onclick="viewUser(
+                                '${encodeURIComponent(
+                                    user.id
+                                )}'
+                            )"
+                        >
+                            Details
+                        </button>
+
+                        ${
+                            status === "active"
+                                ? `
+                                    <button
+                                        class="danger"
+                                        onclick="changeStatus(
+                                            '${encodeURIComponent(
+                                                user.id
+                                            )}',
+                                            'suspended'
+                                        )"
+                                    >
+                                        Close Account
+                                    </button>
+                                  `
+                                : `
+                                    <button
+                                        class="success"
+                                        onclick="changeStatus(
+                                            '${encodeURIComponent(
+                                                user.id
+                                            )}',
+                                            'active'
+                                        )"
+                                    >
+                                        Open Account
+                                    </button>
+                                  `
+                        }
+
+                    </div>
+
+                    <div
+                        id="details-${encodeURIComponent(
+                            user.id
+                        )}"
+                        class="details hidden"
+                    ></div>
+
+                </div>
+            `;
+
+        }).join("");
+}
+
+
+async function changeStatus(
+    encodedId,
+    status
+) {
+
+    const id =
+        decodeURIComponent(
+            encodedId
+        );
+
+    const action =
+        status === "active"
+            ? "open"
+            : "close";
+
+    if (
+        !confirm(
+            "Are you sure you want to " +
+            action +
+            " this account?"
+        )
+    ) {
+        return;
+    }
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/admin/users/" +
+                encodeURIComponent(id) +
+                "/status",
+                {
+                    method: "PATCH",
+
+                    headers:
+                        apiHeaders(),
+
+                    body:
+                        JSON.stringify({
+                            status
+                        })
+                }
+            );
+
+        const data =
+            await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                data.error ||
+                "Status update failed"
+            );
+        }
+
+        loadUsers();
+
+    } catch (error) {
+
+        alert(error.message);
+    }
+}
+
+
+async function viewUser(
+    encodedId
+) {
+
+    const id =
+        decodeURIComponent(
+            encodedId
+        );
+
+    const box =
+        document.getElementById(
+            "details-" +
+            encodedId
+        );
+
+    if (!box) {
+        return;
+    }
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/admin/users/" +
+                encodeURIComponent(id),
+                {
+                    headers:
+                        apiHeaders()
+                }
+            );
+
+        const data =
+            await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                data.error ||
+                "Unable to load details"
+            );
+        }
+
+        const transactions =
+            Array.isArray(
+                data.transactions
+            )
+                ? data.transactions
+                : [];
+
+        box.classList.remove(
+            "hidden"
+        );
+
+        if (!transactions.length) {
+
+            box.innerHTML =
+                `<div class="muted">
+                    No transactions recorded.
+                 </div>`;
+
+            return;
+        }
+
+        box.innerHTML =
+            transactions
+                .slice()
+                .reverse()
+                .map(t => {
+
+                    return `
+                        <div
+                            style="
+                                padding:10px 0;
+                                border-bottom:
+                                1px solid #243452;
+                            "
+                        >
+                            <strong>
+                                ${escapeHTML(
+                                    t.type || ""
+                                )}
+                            </strong>
+
+                            —
+                            $${Number(
+                                t.amount || 0
+                            ).toFixed(2)}
+
+                            <div class="muted">
+                                ${escapeHTML(
+                                    t.reason || ""
+                                )}
+                            </div>
+
+                            <div class="muted">
+                                ${escapeHTML(
+                                    t.time || ""
+                                )}
+                            </div>
+                        </div>
+                    `;
+
+                })
+                .join("");
+
+    } catch (error) {
+
+        box.classList.remove(
+            "hidden"
+        );
+
+        box.textContent =
+            error.message;
+    }
+}
+
+
+function escapeHTML(value) {
+
+    return String(
+        value == null
+            ? ""
+            : value
+    )
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+}
+
+
+if (adminToken) {
+
+    document
+        .getElementById(
+            "loginBox"
+        )
+        .classList.add(
+            "hidden"
+        );
+
+    document
+        .getElementById(
+            "panel"
+        )
+        .classList.remove(
+            "hidden"
+        );
+
+    loadUsers();
+}
+
+</script>
+
+</body>
+</html>
